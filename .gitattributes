@@ -1,0 +1,2 @@
+# Shell scripts run inside Linux containers from a Windows checkout
+scripts/training/pipeline/*.sh text eol=lf
