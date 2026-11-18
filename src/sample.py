@@ -658,7 +658,7 @@ class Sample:
             # Call process_bidding for the current player, updating all `min_scores` arrays
             lho_pard_rho, min_scores_lho, min_scores_partner, min_scores_rho = self.process_bidding(
                 player, lho_pard_rho, min_scores_lho, min_scores_partner, min_scores_rho, 
-                auction, nesw_i, hand, vuln, models, index, actual_bids, n_steps, size, models.bidder_model if player["position"] == 2 else models.opponent_model, self.verbose
+                auction, nesw_i, hand, vuln, models, index, actual_bids, n_steps, size, getattr(models, 'partner_model', models.bidder_model) if player["position"] == 2 else models.opponent_model, self.verbose
             )
             #print(f"Processed bidding for player {player['position']} lho_pard_rho shape", lho_pard_rho.shape)
             if lho_pard_rho.shape[0] == 0:
@@ -1118,7 +1118,7 @@ class Sample:
 
         actual_bids, _ = bidding.get_bid_ids(auction, nesw_i, n_steps)
         if partner:
-            sample_bids, _ = models.bidder_model.pred_fun_seq(X)
+            sample_bids, _ = getattr(models, 'partner_model', models.bidder_model).pred_fun_seq(X)
         else:
             sample_bids, _ = models.opponent_model.pred_fun_seq(X)
 

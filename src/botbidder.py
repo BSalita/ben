@@ -1187,6 +1187,9 @@ class BotBid:
                 X = binary.get_auction_binary_sampling(n_steps_vals[turn_i], auction_np, turn_i, hands_np[:,turn_i,:], self.vuln, self.models, self.models.n_cards_bidding)
                 if bid_i % 2 == 0:
                     x_bid_np, _ = self.models.opponent_model.pred_fun_seq(X)
+                elif bid_i % 4 == 1:
+                    # partner's calls; our own later calls (bid_i % 4 == 3) stay with our network
+                    x_bid_np, _ = getattr(self.models, 'partner_model', self.models.bidder_model).pred_fun_seq(X)
                 else:
                     x_bid_np, _ = self.models.bidder_model.pred_fun_seq(X)
                 

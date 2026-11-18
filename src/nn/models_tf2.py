@@ -465,6 +465,14 @@ class Models:
             opponent_model = Bidder('opponent', path_provider.get_path(os.path.join(base_path, conf['bidding']['opponent'])),alert_supported=alert_supported)
         else:
             opponent_model = Bidder('opponent', path_provider.get_path(os.path.join(base_path, conf['bidding']['bidder'])),alert_supported=alert_supported)
+        # A separate network for partner's calls (sampling partner's hand from the auction, and
+        # partner's calls in rollouts), for a partner who does not bid as we do. Without it
+        # partner is assumed to bid with our own network
+        partner = conf.get('bidding', 'partner', fallback=None)
+        if partner in ('none', None, ''):
+            partner_model = bidder_model
+        else:
+            partner_model = Bidder('partner', path_provider.get_path(os.path.join(base_path, partner)), alert_supported=alert_supported)
         if verbose:
             print(f"Loaded bidding models")
         contract_model=Contract(path_provider.get_path(os.path.join(base_path, conf['contract']['contract'])))
@@ -473,7 +481,7 @@ class Models:
         # The opponents' bidding info network (set in the opponent configs). Sampling takes the
         # HCP and shape of the opponents from it, and of partner from binfo_model
         opponent_info = conf.get('bidding', 'opponent_info', fallback=None)
-        if not opponent_info:
+        if not opponent_info or opponent_info == 'none':
             opponent_binfo_model = None
         elif os.path.normcase(os.path.normpath(opponent_info)) == os.path.normcase(os.path.normpath(conf['bidding']['info'])):
             opponent_binfo_model = binfo_model
@@ -638,6 +646,7 @@ class Models:
         # the play models themselves; off by default.
         models.play_nn_only = conf.getboolean('cardplay', 'play_nn_only', fallback=False)
         models.opponent_binfo_model = opponent_binfo_model
+        models.partner_model = partner_model
         return models
 
     @property

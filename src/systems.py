@@ -11,6 +11,8 @@ What can change per request:
 - ourSystem: the bidding and bidding-info networks used for us and partner, and
   our BBA convention card.
 - theirSystem: the network used to model the opponents' bidding, and their BBA card.
+A system can name other networks (reader, reader_info) for the players of it that are
+not us: partner when it is ours, the opponents when it is theirs.
 - ourCarding: the rule for which pip BEN leads (see carding.select_right_card).
 - theirCarding: accepted, but BEN reads every opening lead with one fixed table
   (openinglead.validate_lead) and has no signalling logic, so it changes nothing yet.
@@ -36,12 +38,15 @@ class UnknownName(ValueError):
 
 
 class System:
-    def __init__(self, name, cc, plays, bidder_model, info_model):
+    def __init__(self, name, cc, plays, bidder_model, info_model, reader_model=None, reader_info_model=None):
         self.name = name
         self.cc = cc
         self.plays = plays
         self.bidder_model = bidder_model
         self.info_model = info_model
+        # The other players of this system: partner when it is ours, the opponents when it is theirs
+        self.reader_model = reader_model if reader_model is not None else bidder_model
+        self.reader_info_model = reader_info_model if reader_info_model is not None else info_model
 
 
 class Systems:
@@ -68,6 +73,9 @@ class Systems:
         opponent_info_path = configuration.get('bidding', 'opponent_info', fallback=None)
         if opponent_info_path and getattr(models, 'opponent_binfo_model', None) is not None:
             loaded[key(opponent_info_path)] = models.opponent_binfo_model
+        partner_path = configuration.get('bidding', 'partner', fallback='none')
+        if partner_path not in ('none', '') and getattr(models, 'partner_model', None) is not None:
+            loaded.setdefault(key(partner_path), models.partner_model)
         alert_supported = configuration.getboolean('bidding', 'alert_supported', fallback=False)
         path_provider = IsolatedModelPathProvider(
             base_temp_storage_path=find_best_temp_drive(temp_subdir_name="BEN_model_temp_storage"))
@@ -92,17 +100,22 @@ class Systems:
             info_model = load_model(section['info'], BidInfo) if 'info' in section else None
             if plays and info_model is None:
                 raise ValueError(f"System {name}: a system BEN plays needs an info network")
-            systems[name.upper()] = System(name.upper(), cc, plays, bidder_model, info_model)
+            reader_model = reader_info_model = None
+            if section.get('reader', 'none') not in ('none', ''):
+                reader_model = load_model(section['reader'], lambda p: Bidder('reader', p, alert_supported=alert_supported))
+            if section.get('reader_info', 'none') not in ('none', ''):
+                reader_info_model = load_model(section['reader_info'], BidInfo)
+            systems[name.upper()] = System(name.upper(), cc, plays, bidder_model, info_model, reader_model, reader_info_model)
 
         # The names of what the server plays when a request does not say
-        def find(path, cc):
+        def find(path, cc, model_of):
             for system in systems.values():
-                if system.bidder_model is loaded.get(key(path)) and key(system.cc) == key(cc or ''):
+                if model_of(system) is loaded.get(key(path)) and key(system.cc) == key(cc or ''):
                     return system.name
             return None
         defaults = {
-            "ourSystem": find(bidder_path, configuration.get('models', 'bba_our_cc', fallback=None)),
-            "theirSystem": find(opponent_path, configuration.get('models', 'bba_their_cc', fallback=None)),
+            "ourSystem": find(bidder_path, configuration.get('models', 'bba_our_cc', fallback=None), lambda s: s.bidder_model),
+            "theirSystem": find(opponent_path, configuration.get('models', 'bba_their_cc', fallback=None), lambda s: s.reader_model),
         }
         pips = (models.lead_from_pips_nt, models.lead_from_pips_suit)
         defaults["ourCarding"] = next((name for name, rule in CARDINGS.items() if rule == pips), defaults["ourSystem"])
@@ -132,12 +145,13 @@ class Systems:
         if requested["ourSystem"]:
             system = self._system("ourSystem", requested["ourSystem"], must_play=True)
             request_models.bidder_model = system.bidder_model
-            request_models.binfo_model = system.info_model
+            request_models.partner_model = system.reader_model
+            request_models.binfo_model = system.reader_info_model
             request_models.bba_our_cc = system.cc
         if requested["theirSystem"]:
             system = self._system("theirSystem", requested["theirSystem"], must_play=False)
-            request_models.opponent_model = system.bidder_model
-            request_models.opponent_binfo_model = system.info_model
+            request_models.opponent_model = system.reader_model
+            request_models.opponent_binfo_model = system.reader_info_model
             request_models.bba_their_cc = system.cc
         for parameter in ("ourCarding", "theirCarding"):
             name = requested[parameter]
