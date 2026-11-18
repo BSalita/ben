@@ -52,9 +52,17 @@ else:
 
 # Check for correct usage
 if len(sys.argv) < 2:
-    print("Usage: python binfo_nn_keras.py inputdirectory system [epochs=30] [gpu_data=1]")
+    print("Usage: python binfo_nn_keras.py inputdirectory system [lstm_size=128] [n_layers=3] [batch_size=256] [epochs=30] [learning_rate=0.0005] [keep=0.8] [decay_steps=0] [schedule=exp|cosine] [final_lr=0.05] [loss=mae|mse|huber] [gpu_data=1]")
+    print("keep: 1 - dropout rate after each LSTM layer")
+    print("decay_steps: the learning rate is multiplied by 0.96 every decay_steps batches (0: constant learning rate)")
+    print("schedule=cosine: cosine decay over all epochs to final_lr times the learning rate, instead of decay_steps")
+    print("loss: mean absolute error (default), mean squared error or Huber loss of the scaled HCP and shape")
     print("gpu_data=0: feed batches from memory with model.fit() even when a GPU is present")
     sys.exit(1)
+
+def arg_value(name, default):
+    value = next((arg.split('=', 1)[1] for arg in sys.argv[3:] if arg.startswith(name + '=')), None)
+    return default if value is None else type(default)(value)
 
 bin_dir = sys.argv[1]
 print(sys.argv)
@@ -71,7 +79,7 @@ X_train = np.load(os.path.join(bin_dir, 'x.npy'), mmap_mode='r')
 # when the array is not of the expected form, it is loaded into memory for model.fit()
 # (random batches from a memory map are far too slow)
 gpu_inputs = None
-if physical_devices and int(next((arg.split('=', 1)[1] for arg in sys.argv[3:] if arg.startswith('gpu_data=')), 1)):
+if physical_devices and arg_value('gpu_data', 1):
     gpu_inputs = gpu_epochs.compact_inputs(X_train)
     print("Training data on the GPU:", gpu_inputs is not None)
 if gpu_inputs is None:
@@ -83,16 +91,32 @@ n_ftrs = X_train.shape[2]
 n_dim_hcp = HCP_train.shape[2]
 n_dim_shape = SHAPE_train.shape[2]
 
-batch_size = 256
-epochs = int(next((arg.split('=', 1)[1] for arg in sys.argv[3:] if arg.startswith('epochs=')), 30))
-learning_rate = 0.0005
-keep = 0.8
+batch_size = arg_value('batch_size', 256)
+epochs = arg_value('epochs', 30)
+learning_rate = arg_value('learning_rate', 0.0005)
+keep = arg_value('keep', 0.8)
+decay_steps = arg_value('decay_steps', 0)
+schedule = arg_value('schedule', 'exp')
+loss_name = arg_value('loss', 'mae')
 steps_per_epoch = n_examples // batch_size
 
 model_name = f'{system}_{datetime.datetime.now().strftime("%Y-%m-%d")}'
 
-lstm_size = 128
-n_layers = 3
+lstm_size = arg_value('lstm_size', 128)
+n_layers = arg_value('n_layers', 3)
+
+# Learning rate: constant (as always before), times 0.96 every decay_steps batches, or half a
+# cosine down to final_lr times the learning rate over the whole training
+learning_rate_schedule = learning_rate
+if schedule == 'cosine':
+    from tensorflow.keras.optimizers.schedules import CosineDecay
+    learning_rate_schedule = CosineDecay(initial_learning_rate=learning_rate, decay_steps=steps_per_epoch * epochs,
+                                         alpha=arg_value('final_lr', 0.05))
+elif decay_steps > 0:
+    from tensorflow.keras.optimizers.schedules import ExponentialDecay
+    learning_rate_schedule = ExponentialDecay(initial_learning_rate=learning_rate, decay_steps=decay_steps,
+                                              decay_rate=0.96, staircase=True)
+loss_fn = {'mae': 'mean_absolute_error', 'mse': 'mean_squared_error', 'huber': 'huber'}[loss_name]
 
 print("-------------------------")
 print("Examples for training:   ", n_examples)
@@ -111,7 +135,9 @@ print("Batch size:              ", batch_size)
 print("steps_per_epoch          ", steps_per_epoch)
 print("-------------------------")
 print("Learning rate:           ", learning_rate)
+print("Schedule:                ", 'cosine' if schedule == 'cosine' else f'decay_steps {decay_steps}' if decay_steps > 0 else 'constant')
 print("Keep:                    ", keep)
+print("Loss:                    ", loss_fn)
 print("-------------------------")
 print("lstm_size:               ", lstm_size)
 print("n_layers:                ", n_layers)
@@ -134,8 +160,8 @@ def build_model(input_shape, lstm_size, n_layers, n_dim_hcp, n_dim_shape):
 
     model = models.Model(inputs=inputs, outputs=[hcp_outputs, shape_outputs])
 
-    model.compile(optimizer=optimizers.Adam(learning_rate=learning_rate),
-              loss={'hcp_output': 'mean_absolute_error', 'shape_output': 'mean_absolute_error'},
+    model.compile(optimizer=optimizers.Adam(learning_rate=learning_rate_schedule),
+              loss={'hcp_output': loss_fn, 'shape_output': loss_fn},
               metrics={'hcp_output': 'accuracy', 'shape_output': 'accuracy'})
 
     print(model.summary())
