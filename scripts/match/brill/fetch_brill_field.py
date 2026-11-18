@@ -2,7 +2,10 @@
 
 Run on Windows with the Elo venv (it has the Brill sign-in through postmortem-brill):
 
-    elo/.venv/Scripts/python.exe ben/scripts/match/brill/fetch_brill_field.py OUT.jsonl
+    elo/.venv/Scripts/python.exe ben/scripts/match/brill/fetch_brill_field.py OUT.jsonl [--full]
+
+When OUT.jsonl exists, only events that are not in it yet are downloaded and
+added (a closed event does not change); --full downloads everything again.
 
 One line per event and board:
   {tournament_id, event, scoring, date, board, dealer, vul, deal,
@@ -63,10 +66,17 @@ def most_common(values):
 
 def main():
     out = pathlib.Path(sys.argv[1])
+    full = '--full' in sys.argv[2:]
     started = datetime.now()
     print(f'start {started:%Y-%m-%d %H:%M:%S}')
+    # events already in OUT are kept as they are: a closed event does not change
+    known = {}
+    if out.exists() and not full:
+        for line in out.open(encoding='utf-8'):
+            known.setdefault(json.loads(line)['tournament_id'], []).append(line)
     tournaments = elo_brill.list_closed_tournaments()
-    ids = [t['id'] for t in tournaments]
+    ids = [t['id'] for t in tournaments if t['id'] not in known]
+    print(f'{len(tournaments)} closed events, {len(known)} already in {out.name}, {len(ids)} to fetch')
     challenge_of = {}
     for i in range(0, len(ids), 40):
         chunk = f'in.({",".join(ids[i:i + 40])})'
@@ -77,9 +87,17 @@ def main():
         }):
             challenge_of.setdefault(row['tournament_id'], row['challenge_id'])
 
-    boards = 0
-    with out.open('w', encoding='utf-8') as f:
-        for t in tqdm(tournaments):
+    boards = new_events = 0
+    listed = {t['id'] for t in tournaments}
+    temp = out.with_name(out.name + '.new')
+    with temp.open('w', encoding='utf-8') as f:
+        for tournament_id, lines in known.items():      # kept events the site no longer lists
+            if tournament_id not in listed:
+                f.writelines(lines)
+        for t in tqdm(tournaments, disable=not ids):
+            if t['id'] in known:
+                f.writelines(known[t['id']])
+                continue
             challenge_id = challenge_of.get(t['id'])
             if not challenge_id:
                 continue
@@ -87,6 +105,7 @@ def main():
                 'select': RESULT_COLUMNS, 'challenge_id': f'eq.{challenge_id}',
                 'order': 'board_number.asc'})
             event_time = t.get('starts_at') or t.get('created_at') or ''
+            new_events += 1
             for number in sorted({r['board_number'] for r in results}):
                 rows = [r for r in results if r['board_number'] == number]
                 with_deal = [r for r in rows if r.get('deal_pbn')]
@@ -117,8 +136,10 @@ def main():
                     'deal': rotate_to_north(deal, dealer), 'tables': tables,
                 }, ensure_ascii=False) + '\n')
                 boards += 1
+    temp.replace(out)
     ended = datetime.now()
-    print(f'end {ended:%Y-%m-%d %H:%M:%S}  elapsed {ended - started}  events {len(tournaments)}  boards {boards}  -> {out}')
+    print(f'end {ended:%Y-%m-%d %H:%M:%S}  elapsed {ended - started}  events {len(tournaments)}  '
+          f'new events {new_events}  new boards {boards}  -> {out}')
 
 
 if __name__ == '__main__':
