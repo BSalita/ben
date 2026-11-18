@@ -70,7 +70,11 @@ def dd_for_rows(data_dir, sources, src_rows):
         contract, _, decl = outcome.split('.')
         hands = dict(zip('WNES', deal[2:].split()))
         pbns.append('N:' + ' '.join(hands[s] for s in SEATS))
-        leaders.append((SEATS.index(decl) + 1) % 4)
+        # The leader is the hand that holds the card led. The declarer letter of the record is
+        # only the fallback: in data/WBC/play.txt it is wrong in three records out of four
+        # (playing/check_play_data.py), which made the lead of the record an impossible card.
+        holder = next((s for s in SEATS if play[1] in hands[s].split('.')['SHDC'.index(play[0])]), None)
+        leaders.append(SEATS.index(holder) if holder else (SEATS.index(decl) + 1) % 4)
         strains.append('NSHDC'.index(contract[1]))
         leads.append('SHDC'.index(play[0]) * 13 + RANKS.index(play[1]))
     for i in range(len(src_rows)):
