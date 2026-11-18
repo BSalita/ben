@@ -37,14 +37,29 @@ H4H7HTHKSKS8S3S9SJS7S5S2SQSTSAS4S6H2C9C6C4CKC8C5H3HQHAH8HJH9D3H6H5D2C3D6C2C7CACT
 Run the script to transform the data into binary format. A single script now covers all four seats, and splits each of them into a suit variant and a NT variant:
 
 ```
-python binary_keras_suit_nt.py
+python binary_keras_suit_nt.py [input.txt ...] [out_dir=./binary] [workers=4]
 ```
 
-The input file is set inside the script (currently `../../data/WBC/play.txt`), so edit it there if you want to
-train on other data. That file is not in the repository - it is published on the
+Without input files it reads `../../data/WBC/play.txt`. The eight arrays are built in separate processes,
+`workers` at a time; a suit array of 1.2 million deals takes 8 GB while it is built, so four at a time need
+about 32 GB (`workers=1` builds them one after the other).
+
+The WBC file is not in the repository - it is published on the
 [training-data release](https://github.com/lorserker/ben/releases/tag/training-data) as
 [play_jackformat.zip](https://github.com/lorserker/ben/releases/download/training-data/play_jackformat.zip)
 (the same boards in BEN format are in [play_ben.zip](https://github.com/lorserker/ben/releases/download/training-data/play_ben.zip)).
+
+**The declarer letter in the published WBC file is wrong in three records out of four** (the dealer letter and
+the auction give the right declarer in 99.8% of them). The converter therefore does not use the letter: the
+declarer is the right-hand opponent of the hand that holds the card led to the first trick, and records whose
+play does not fit the hands (0.04%) are left out. `check_play_data.py` reports this for any play file:
+
+```
+python check_play_data.py ../../data/WBC/play.txt
+```
+
+Arrays made from the WBC file by an older converter show three deals out of four from the wrong seats; a model
+scores about 33% on such an array against 77% on a right one, which is how to tell them apart.
 
 This writes 16 files into the `binary` folder - `X_<seat>_<suit|nt>.npy` and `Y_<seat>_<suit|nt>.npy` for each of `lefty`, `righty`, `decl` and `dummy`. `X` contains the inputs to the neural network and `Y` the expected outputs, both in numpy array format.
 
@@ -63,7 +78,19 @@ python play_nn_keras.py binary righty_nt
 python play_nn_keras.py binary righty_suit
 ```
 
-The first argument is the directory holding the binary files, the second selects which of them to train on. Options can follow as `key=value`: `lstm_size` (128), `n_layers` (3), `epochs` (30), `batch_size` (1024), `learning_rate` (0.001), `keep` (0.8), `val_fraction` (0.05), `patience` (3), `max_examples` (0 = all) and `name`. The generated model is named after that selection plus the date, and is written to the `model` folder; `<name>_<date>-best.keras` is the snapshot with the best validation loss.
+The first argument is the directory holding the binary files, the second selects which of them to train on. Options can follow as `key=value`: `lstm_size` (128), `n_layers` (3), `dense_layers` (0), `dense_units` (512), `epochs` (30), `batch_size` (1024), `learning_rate` (0.001), `keep` (0.8), `val_fraction` (0.05), `patience` (3), `max_examples` (0 = all), `name`, `schedule` (`plateau`), `final_lr` (0.02), `gpu_data` (1) and `seed` (0 = not set). The generated model is named after that selection plus the date, and is written to the `model` folder; `<name>_<date>-best.keras` is the snapshot with the best validation loss.
+
+With a GPU the training deals are held on the GPU in compact form and several hundred training steps run as one program (`../gpu_epochs.py`), with the LSTM layers unrolled over the tricks and compiled by XLA: an epoch of `decl_suit` (1.2 million deals, the hybrid network below) takes 10 seconds on an RTX 5080 against 34 seconds with `model.fit()` (2026-11-18, nothing else on the GPU); the first epoch takes about a minute longer while the program is compiled. `gpu_data=0` selects `model.fit()`; it is also used without a GPU and for arrays that are not of the expected form. The saved models are the same either way.
+
+`schedule=plateau` (the default) multiplies the learning rate by 0.3 when the validation loss stops improving and stops after `patience` epochs without improvement. `schedule=cosine` lowers the learning rate along half a cosine to `final_lr` times its start over all epochs, without an early stop; it scored worse than `plateau` in every run of November 2026.
+
+The shipped `*_hybrid_2026-10-16.keras` models have two dense layers of 512 before two LSTM layers of 256. With `epochs=30` that network is still improving when training ends; with less dropout and room to finish it scores better on the held-out deals (see `../pipeline/README.md` for the runs):
+
+```
+python play_nn_keras.py binary decl_suit dense_layers=2 dense_units=512 lstm_size=256 n_layers=2 keep=0.9 epochs=60
+```
+
+For the four NT seats, which have half as many deals, `keep=0.8` is better than `keep=0.9`.
 
 To compare models on the held-out deals:
 

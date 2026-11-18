@@ -3,7 +3,44 @@ import os
 import os.path
 import numpy as np
 
-from binary_util import play_data_iterator, get_play_labels, DealMeta, seats, seat_index, suit_index_lookup, binary_hand, get_card_index, hot_encode_card
+from binary_util import play_data_iterator, get_play_labels, DealMeta, seats, seat_index, suit_index_lookup, binary_hand, get_card_index, hot_encode_card, wins_trick_index
+
+def lead_holder(hands, play_str):
+    # The seat (index in the deal string) that holds the card led to the first trick
+    suit, rank = suit_index_lookup[play_str[0]], play_str[1]
+    return next((i for i, hand in enumerate(hands) if rank in hand[suit]), None)
+
+def declarer_index(hands, d_meta, play_str):
+    # The declarer is the right-hand opponent of the player who holds the opening lead. The
+    # declarer letter of the record is not used: in the WBC file (data/WBC/play.txt) it agrees
+    # with the cards played in only one record out of four, while the play itself fits the
+    # hands in 99.9% of the records (check_play_data.py). With the letter, three quarters of
+    # the training rows showed the network hands that did not hold the cards being played.
+    holder = lead_holder(hands, play_str)
+    if holder is None:
+        return seat_index[d_meta.declarer]
+    return (holder - 1) % 4
+
+def play_fits_hands(deal_str, outcome_str, play_str):
+    # True when every card of the play is in the hand whose turn it is, from the real leader on
+    hands = [set(suit + card for suit, cards in zip('SHDC', hand_str.split('.')) for card in cards)
+             for hand_str in deal_str[2:].split()]
+    cards = [play_str[i:i + 2] for i in range(0, len(play_str), 2)]
+    if len(cards) != 52 or len(hands) != 4:
+        return False
+    on_lead = next((i for i, hand in enumerate(hands) if cards[0] in hand), None)
+    if on_lead is None:
+        return False
+    trump = DealMeta.from_str(outcome_str).strain
+    for t in range(0, 52, 4):
+        trick = cards[t:t + 4]
+        for i, card in enumerate(trick):
+            hand = hands[(on_lead + i) % 4]
+            if card not in hand:
+                return False
+            hand.remove(card)
+        on_lead = wins_trick_index(trick, trump, on_lead)
+    return True
 
 def binary_data_righty(deal_str, outcome_str, play_str):
     '''
@@ -30,7 +67,7 @@ def binary_data_righty(deal_str, outcome_str, play_str):
     
     hands = list(map(lambda hand_str: list(map(list, hand_str.split('.'))), deal_str[2:].split()))
     d_meta = DealMeta.from_str(outcome_str)
-    declarer_i = seat_index[d_meta.declarer]
+    declarer_i = declarer_index(hands, d_meta, play_str)
     leader_i = (declarer_i + 1) % 4
     dummy_i = (declarer_i + 2) % 4
     me_i = (dummy_i + 1) % 4
@@ -88,7 +125,7 @@ def binary_data_decl(deal_str, outcome_str, play_str):
     
     d_meta = DealMeta.from_str(outcome_str)
 
-    declarer_i = seat_index[d_meta.declarer]
+    declarer_i = declarer_index(hands, d_meta, play_str)
     dummy_i = (declarer_i + 2) % 4
     me_i = declarer_i
 
@@ -143,7 +180,7 @@ def binary_data_dummy(deal_str, outcome_str, play_str):
     
     hands = list(map(lambda hand_str: list(map(list, hand_str.split('.'))), deal_str[2:].split()))
     d_meta = DealMeta.from_str(outcome_str)
-    declarer_i = seat_index[d_meta.declarer]
+    declarer_i = declarer_index(hands, d_meta, play_str)
     me_i = (declarer_i + 2) % 4
 
     declarer_bin = binary_hand(hands[declarer_i])
@@ -197,7 +234,7 @@ def binary_data_lefty(deal_str, outcome_str, play_str):
     
     hands = list(map(lambda hand_str: list(map(list, hand_str.split('.'))), deal_str[2:].split()))
     d_meta = DealMeta.from_str(outcome_str)
-    declarer_i = seat_index[d_meta.declarer]
+    declarer_i = declarer_index(hands, d_meta, play_str)
     dummy_i = (declarer_i + 2) % 4
     me_i = (declarer_i + 1) % 4
 
@@ -402,26 +439,46 @@ def handle_righty_suit(out_dir, binary_data_righty, data_it_suit, n2):
     np.save(os.path.join(out_dir, 'Y_righty_suit.npy'), Y)
     print()
 
+HANDLERS = {
+    'decl_nt': (handle_declarer_nt, binary_data_decl), 'dummy_nt': (handle_dummy_nt, binary_data_dummy),
+    'lefty_nt': (handle_lefty_nt, binary_data_lefty), 'righty_nt': (handle_righty_nt, binary_data_righty),
+    'decl_suit': (handle_declarer_suit, binary_data_decl), 'dummy_suit': (handle_dummy_suit, binary_data_dummy),
+    'lefty_suit': (handle_lefty_suit, binary_data_lefty), 'righty_suit': (handle_righty_suit, binary_data_righty),
+}
+
+def open_data(inputs):
+    # Records whose play does not fit the hands (0.05% of the WBC file) are left out
+    return (record for record in play_data_iterator(itertools.chain(*[open(path) for path in inputs]))
+            if play_fits_hands(*record))
+
+def run_handler(task):
+    # One seat and strain; reads the input files itself, so it can run in its own process
+    name, inputs, out_dir, n = task
+    handler, binary_data = HANDLERS[name]
+    handler(out_dir, binary_data, open_data(inputs), n)
+    return name
+
 if __name__ == '__main__':
+    import sys
+    import multiprocessing
 
-    data_it = play_data_iterator(itertools.chain(
-        open('../../data/WBC/play.txt'))) 
-    out_dir = './binary'
+    # python binary_keras_suit_nt.py [input.txt ...] [out_dir=./binary] [workers=4]
+    # Without input files: ../../data/WBC/play.txt. Each of the eight arrays is built in its
+    # own process, workers at a time; a suit array of 1.2 million deals takes 8 GB while it
+    # is built, so four at a time need about 32 GB. workers=1 does them one after the other.
+    options = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
+    inputs = [arg for arg in sys.argv[1:] if '=' not in arg] or ['../../data/WBC/play.txt']
+    out_dir = options.get('out_dir', './binary')
+    workers = int(options.get('workers', 4))
+    os.makedirs(out_dir, exist_ok=True)
 
-    # Using data from Jack
-    # data_it = play_data_iterator(itertools.chain(
-    #     open('../../data/jack/BW5C_N.txt'),
-    #     open('../../data/jack/BW5C_S.txt'),
-    #     open('../../data/jack/JOS_N.txt'),
-    #     open('../../data/jack/JOS_S.txt')
-    # ))
-    # out_dir = './binary_jack'
+    # Using data from Jack: pass ../../data/jack/BW5C_N.txt ../../data/jack/BW5C_S.txt
+    # ../../data/jack/JOS_N.txt ../../data/jack/JOS_S.txt out_dir=./binary_jack
 
-    data_it_play = itertools.tee(data_it,9)  # Create a copy of the iterator
     print("Counting deals")
     n1 = 0
     n2 = 0
-    for i, (deal_str, outcome_str, play_str) in enumerate(data_it_play[0]):
+    for i, (deal_str, outcome_str, play_str) in enumerate(open_data(inputs)):
         if (i != 0) and i % 100000 == 0:
             print(f"\rProgress: {i} deals", end="")
         d_meta = DealMeta.from_str(outcome_str)
@@ -431,25 +488,15 @@ if __name__ == '__main__':
             n2 += 1
     print()
     print("{0} total deals".format(n1+n2))
+    print(f"Processing {n1} deals for NT and {n2} deals for suit")
 
-    print(f"Processing {n1} deals for NT")
-
-    print("Declarer")
-    handle_declarer_nt(out_dir, binary_data_decl, data_it_play[1], n1)
-    print("Dummy")
-    handle_dummy_nt(out_dir, binary_data_dummy, data_it_play[2], n1)
-    print("Left hand opponent")
-    handle_lefty_nt(out_dir, binary_data_lefty, data_it_play[3], n1)
-    print("Right hand opponent")
-    handle_righty_nt(out_dir, binary_data_righty, data_it_play[4], n1)
-
-    print(f"Processing {n2} deals for suit")
-
-    print("Declarer")
-    handle_declarer_suit(out_dir, binary_data_decl, data_it_play[5], n2)
-    print("Dummy")
-    handle_dummy_suit(out_dir, binary_data_dummy, data_it_play[6], n2)
-    print("Left hand opponent")
-    handle_lefty_suit(out_dir, binary_data_lefty, data_it_play[7], n2)
-    print("Right hand opponent")
-    handle_righty_suit(out_dir, binary_data_righty, data_it_play[8], n2)
+    tasks = [(name, inputs, out_dir, n1 if name.endswith('_nt') else n2) for name in HANDLERS]
+    if workers > 1:
+        with multiprocessing.Pool(workers, maxtasksperchild=1) as pool:
+            for name in pool.imap_unordered(run_handler, tasks):
+                print()
+                print("Done:", name)
+    else:
+        for task in tasks:
+            print(task[0])
+            run_handler(task)
