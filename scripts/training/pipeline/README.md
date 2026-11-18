@@ -99,12 +99,15 @@ All eight seats with `epochs=60`, top card / nll:
 |------|-------------------------------|-----------|--------|
 | `decl_suit` | 0.7684 / 0.5943 | 0.7744 / 0.5794 | 0.9 |
 | `lefty_suit` | 0.7752 / 0.5483 | 0.7766 / 0.5468 | 0.9 |
-| `righty_suit` | 0.8068 / 0.4655 | 0.8074 / 0.4662 | 0.9 |
+| `righty_suit` | 0.8068 / 0.4655 | 0.8083 / 0.4624 | 0.8 |
 | `dummy_suit` | 0.7954 / 0.5075 | 0.7954 / 0.5088 | 0.9 |
 | `decl_nt` | 0.7851 / 0.5488 | 0.7852 / 0.5473 | 0.8 |
 | `lefty_nt` | 0.7495 / 0.6154 | 0.7510 / 0.6114 | 0.8 |
 | `righty_nt` | 0.7838 / 0.5191 | 0.7867 / 0.5119 | 0.8 |
 | `dummy_nt` | 0.8098 / 0.4787 | 0.8122 / 0.4717 | 0.8 |
+
+The suit seats with `keep=0.8`: 0.7710, 0.7751, 0.8083, 0.7924 top card; with `keep=0.9`:
+0.7744, 0.7766, 0.8074, 0.7954 (declarer, left, right, dummy).
 
 A match of 160 boards with `play_nn_only = True` (`../../match/ab_match.py --mode play`),
 the four retrained suit networks against the shipped ones, ended +0.11 IMPs per board for the
