@@ -38,7 +38,16 @@ if ($WaitForPid) {
     Write-Host "waiting for process $WaitForPid ..."
     Wait-Process -Id $WaitForPid -ErrorAction SilentlyContinue
 }
-Step "Brill autoplay" @("$scripts\brill_autoplay.py", "$data\field.jsonl", "$data\runs\$Model.jsonl", "$data\autoplay\$Model.jsonl")
+# A failed autoplay does not stop the rebuild: every result it got is saved, the boards without
+# one keep their double-dummy result, and new events must still reach the page. The failure is
+# reported at the end.
+$autoplayError = $null
+try {
+    Step "Brill autoplay" @("$scripts\brill_autoplay.py", "$data\field.jsonl", "$data\runs\$Model.jsonl", "$data\autoplay\$Model.jsonl")
+} catch {
+    $autoplayError = $_.Exception.Message
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $autoplayError; rebuilding with the results so far"
+}
 Step "single-dummy probabilities" @("$scripts\brill_sd_probs.py", "$data\field.jsonl", "$out\sd.json", "--workers", "16")
 Step "board table" @("$scripts\brill_board_table.py", "$data\field.jsonl", "$data\runs\$Model.jsonl", "$data\autoplay\$Model.jsonl", "$out\sd.json", $out)
 Step "page" @("$scripts\brill_board_page.py", $out, $Name)
@@ -48,3 +57,7 @@ if ($Publish) {
     if ($LASTEXITCODE -ne 0) { throw "publish failed with exit code $LASTEXITCODE" }
 }
 Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') end"
+if ($autoplayError) {
+    $done = if ($Publish) { "rebuilt and published" } else { "rebuilt" }
+    throw "$autoplayError (the page was still $done; boards left are tried again next run)"
+}

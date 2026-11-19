@@ -10,7 +10,8 @@ in the auction our model reached. Boards that need no request:
 Every other board is sent to /autoplay, one request at a time (the service plays
 live events too). OUT.jsonl gets one line per played board and the run can be
 started again: boards already in OUT are skipped. Three failures in a row stop it (six when they
-are gateway time-outs: those mark a board the service plays for more than 180 s).
+are gateway time-outs: those mark a board the service plays for more than 180 s; a time-out on a
+board that failed before is not counted).
 A board that failed twice is left out and keeps its double-dummy result.
 """
 import json
@@ -120,7 +121,7 @@ def main():
         raise SystemExit(f'Brill service not ready: {status}')
     failures = slow_run = 0
     with out_path.open('a', encoding='utf-8') as out:
-        for _, _, _, r in tqdm(todo, mininterval=60, file=sys.stdout):
+        for retry, _, _, r in tqdm(todo, mininterval=60, file=sys.stdout):
             board = field[(r['tournament_id'], r['board'])]
             row = {'tournament_id': r['tournament_id'], 'board': r['board'], 'auction': r['walk']}
             t0 = time.time()
@@ -130,9 +131,11 @@ def main():
             except (urllib.error.URLError, TimeoutError, RuntimeError, KeyError, ValueError) as error:
                 detail = error.read().decode('utf-8', 'replace')[:300] if isinstance(error, urllib.error.HTTPError) else ''
                 row['error'] = f'{type(error).__name__}: {error} {detail}'.strip()
-                # a 504 is a board the service plays for more than 180 s, not an outage
+                # a 504 is a board the service plays for more than 180 s, not an outage. On a board that
+                # already failed once it is expected and says nothing about the service: the retries
+                # come last, so a run of them would otherwise stop every run that has some.
                 if isinstance(error, urllib.error.HTTPError) and error.code == 504:
-                    slow_run += 1
+                    slow_run += 0 if retry else 1
                 else:
                     failures += 1
             row['seconds'] = round(time.time() - t0, 1)
