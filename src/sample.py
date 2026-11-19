@@ -158,10 +158,25 @@ class Sample:
         hcp_reduction_factor = conf.getfloat('sampling', 'hcp_reduction_factor', fallback=0.9)
         shp_reduction_factor = conf.getfloat('sampling', 'shp_reduction_factor', fallback=0.5)
         sample_previous_round_if_needed = conf.getboolean('sampling', 'sample_previous_round_if_needed', fallback=False)        
-        return cls(lead_accept_threshold, lead_accept_threshold_suit, lead_accept_threshold_honors, lead_accept_threshold_partner_trust, bidding_threshold_sampling, play_accept_threshold_opponents, play_accept_threshold_declarer, play_accept_threshold_partner, min_play_accept_threshold_samples, 
+        sample = cls(lead_accept_threshold, lead_accept_threshold_suit, lead_accept_threshold_honors, lead_accept_threshold_partner_trust, bidding_threshold_sampling, play_accept_threshold_opponents, play_accept_threshold_declarer, play_accept_threshold_partner, min_play_accept_threshold_samples, 
                    bid_accept_play_threshold, bid_accept_threshold_bidding, bid_extend_play_threshold, sample_hands_auction, min_sample_hands_auction, sample_boards_for_auction, sample_boards_for_auction_step, warn_to_few_samples, increase_for_bid_count, 
                    sample_boards_for_auction_opening_lead, sample_hands_opening_lead, sample_hands_play, min_sample_hands_play, min_sample_hands_play_bad, sample_boards_for_play, max_unknown_cards_for_sampling, use_biddinginfo, check_remaining_cards, check_discard, use_distance, no_samples_when_no_search, 
                    exclude_samples, no_biddingquality_after_bid_count, hcp_reduction_factor, shp_reduction_factor, sample_previous_round_if_needed, verbose)
+        # optional: run folder of the auction model; when set, the bidding search takes its deals from it
+        sample.auction_model = conf.get('sampling', 'auction_model', fallback='').strip()
+        # with auction_model set: take the deals from it (default), and/or let it add a candidate in the passout
+        # seat when its expected score for a contract of ours beats defending by this many points (empty = off)
+        sample.auction_model_deals = conf.getboolean('sampling', 'auction_model_deals', fallback=True)
+        guard = conf.get('sampling', 'auction_model_guard', fallback='').strip()
+        sample.auction_model_guard = float(guard) if guard else None
+        # with auction_model set: rules of auction-model/tactical.py whose calls join the bidding candidates
+        # (double, sacrifice, interfere, lead, toward; empty = off) and the insta_score they get (number or 'top')
+        tactical = conf.get('sampling', 'auction_model_tactical', fallback='')
+        sample.auction_model_tactical = [r.strip() for r in tactical.split(',') if r.strip()]
+        sample.auction_model_tactical_trust = conf.get('sampling', 'auction_model_tactical_trust', fallback='').strip() or None
+        # measurement only: a Brill field file; the search is handed the real deal as every sample
+        sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
+        return sample
 
     @property
     def sample_hands_auction(self):
