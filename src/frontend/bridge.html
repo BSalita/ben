@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
 
-  <title>Bridge with BEN</title>
+  <title>Bridge with Morty</title>
 
   <link rel="stylesheet" href="style.css">
   <script src="bridge.js"></script>
@@ -30,7 +30,7 @@
 
 <body>
     <div class="center">
-        <h1>Play with BEN. Version 0.9.0.3</h1>
+        <h1>Play with Morty. Built on BEN 0.9.0.3</h1>
     </div>    
 <div id="loader"></div> 
 <!-- HTML for the dialog -->
@@ -162,7 +162,7 @@
 
             ws.addEventListener("error", function (event) {
                 console.log("WebSocket error:", event);
-                alert("Cannot connect to server on port " + serverport + ".\nIs the correct BEN server running?\nStart it with: python gameserver.py")
+                alert("Cannot connect to server on port " + serverport + ".\nIs the correct Morty server running?\nStart it with: python gameserver.py")
                 document.querySelector('#auctionstr').innerHTML += 'No connection to server <br>'
             });
 
@@ -436,9 +436,9 @@
                     el.addEventListener("click", bidSuitClick))
                 } else if (data.message == "hint") {
                 console.log(data)
-                let msg = "BEN suggest: " + data.bids.bid + "\n"
+                let msg = "Morty suggests: " + data.bids.bid + "\n"
                 msg += data.bids.explanation + "\n"
-                msg += "BEN considered: \n"
+                msg += "Morty considered: \n"
                 for (const element of data.bids.candidates) {
                     msg += " " + element.call + " Score: "
                     msg += element.insta_score+ "\n"

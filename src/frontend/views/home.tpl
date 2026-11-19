@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-		<title>BEN - The open source bridge engine</title>
+		<title>Morty - built on BEN, the open source bridge engine</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
         <link rel="stylesheet" href="/app/style.css">
     <script src="/app/wsurl.js"></script>
@@ -42,7 +42,7 @@
 	</head> 
 <body>
 <div class="center">
-    <h1>Play with BEN. Version 0.9.0.3</h1>
+    <h1>Play with Morty. Built on BEN 0.9.0.3</h1>
     <div style="margin-bottom: 15px;">
         <a href="/autoplay" style="padding: 8px 16px; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px;">Autoplay (Generate PBN)</a>
         <a href="/api" style="padding: 8px 16px; background: #2196F3; color: white; text-decoration: none; border-radius: 4px; margin-left: 10px;">API Reference</a>
@@ -54,8 +54,8 @@
     <div class="content">
         <label for="server">Server:</label>
         <select id="server" name="server">
-            <option value="0">BEN 2/1</option>
-            <option value="1">BEN SAYC</option>
+            <option value="0">Morty 2/1</option>
+            <option value="1">Morty SAYC</option>
             <option value="2">GIB-BBO</option>
             <!-- Default selection: port 4443, the one gameserver.py and
                  start_ben.sh use. The other three only exist if you started
@@ -355,7 +355,7 @@ async function includeCheckboxValues(event) {
         ws.onerror = () => { clearTimeout(timer); resolve(false); };
     });
     if (!reachable) {
-        alert('No BEN server found on port ' + serverPort + '.\nPlease start the server or choose a different server in the dropdown.');
+        alert('No Morty server found on port ' + serverPort + '.\nPlease start the server or choose a different server in the dropdown.');
         return;
     }
 

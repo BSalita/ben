@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="robots" content="noindex, nofollow">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <title>BEN Autoplay - Generate PBN</title>
+    <title>Morty Autoplay - Generate PBN</title>
     <style>
         /* Reset any external styles */
         .autoplay-container,
@@ -256,13 +256,13 @@
 <body>
 <div class="autoplay-container">
     <div class="page-title">
-        <h1>BEN Autoplay</h1>
+        <h1>Morty Autoplay</h1>
     </div>
 
     <div class="card">
         <div class="card-header">
             <h2>Generate PBN</h2>
-            <p>Play a complete board with all 4 hands controlled by BEN</p>
+            <p>Play a complete board with all 4 hands controlled by Morty</p>
         </div>
 
         <div class="form-row-inline">
@@ -390,14 +390,14 @@ Elapsed: ${data.elapsed || 'N/A'} seconds`;
         const auction = Array.isArray(data.auction) ? data.auction : (data.auction || '').split('-');
         const play = Array.isArray(data.play) ? data.play : [];
 
-        let pbn = `[Event "BEN Autoplay"]
+        let pbn = `[Event "Morty Autoplay"]
 [Site ""]
 [Date "${new Date().toISOString().split('T')[0].replace(/-/g, '.')}"]
 [Board "${boardNum}"]
-[West "BEN"]
-[North "BEN"]
-[East "BEN"]
-[South "BEN"]
+[West "Morty"]
+[North "Morty"]
+[East "Morty"]
+[South "Morty"]
 [Dealer "${data.dealer}"]
 [Vulnerable "${formatVuln(data.vulnerability)}"]
 [Deal "N:${data.deal}"]

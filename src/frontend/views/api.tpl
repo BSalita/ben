@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
-    <title>BEN - The oracle</title>
+    <title>Morty - The oracle</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
@@ -22,7 +22,7 @@
 
 <body>
     <div>
-        <h1>API for BEN. Version 0.9.0.3</h1>
+        <h1>API for Morty. Built on BEN 0.9.0.3</h1>
     </div>
     <div id="loader"></div> 
     <div id="dealdiv">
@@ -83,14 +83,14 @@
         <label for="playInput">Play:</label>
         <input type="checkbox" id="format" data-default="false"><label for="format">Play is in PBN format (opening leader first in all tricks, but incomplete tricks should follow lead rules)</label><br>
         <textarea id="playInput"   rows="3" cols="64" placeholder="Enter cards (S7H3H6)" required onmouseover="showTooltip(2)" onmouseout="hideTooltip(2)"></textarea><br>
-        <small id="tooltip2" style="display: none;">Please enter all the played cards including cards from BEN</small><br><br>
+        <small id="tooltip2" style="display: none;">Please enter all the played cards including cards from Morty</small><br><br>
 
                     
-        <button onclick="callAPI('bid')">Ask BEN for bid</button>&nbsp;&nbsp;
-        <button onclick="callAPI('play')">Ask BEN for play</button><br><br>
-        <button onclick="callAPI('lead')">Ask BEN for lead</button><br><br>
+        <button onclick="callAPI('bid')">Ask Morty for bid</button>&nbsp;&nbsp;
+        <button onclick="callAPI('play')">Ask Morty for play</button><br><br>
+        <button onclick="callAPI('lead')">Ask Morty for lead</button><br><br>
         <button onclick="callAPI('claim')">Claim</button><br><br>
-        <button onclick="callAPI('contract')">Ask BEN for contract</button>&nbsp;&nbsp;
+        <button onclick="callAPI('contract')">Ask Morty for contract</button>&nbsp;&nbsp;
         <button onclick="callAPI('explain')">Explain last bid</button><br><br>
         <button onclick="callAPI('explain_auction')">Explain auction</button><br><br>
         <div id="result"></div><br><br>
@@ -984,14 +984,14 @@
 
                 if (action == 'bid') {
                     if (data.alert == "True") {
-                        document.getElementById('result').innerText = `BEN Suggest: ${data.bid}*`;
+                        document.getElementById('result').innerText = `Morty suggests: ${data.bid}*`;
                     } else {
-                        document.getElementById('result').innerText = `BEN Suggest: ${data.bid}`;
+                        document.getElementById('result').innerText = `Morty suggests: ${data.bid}`;
                     }
                     displayBid(data);
                 }
                 if (action == 'contract') {
-                    document.getElementById('result').innerText = 'BEN Suggest:';
+                    document.getElementById('result').innerText = 'Morty suggests:';
                     for (var key in data) {
                         if (data.hasOwnProperty(key)) {
                             var entry = data[key];
@@ -1030,7 +1030,7 @@
                 }
                 if ((action == 'play') || (action == 'lead')) {
                     const declarer = findDeclarer(bidding)
-                    document.getElementById('result').innerText = `BEN Suggest: ${data.card}`;
+                    document.getElementById('result').innerText = `Morty suggests: ${data.card}`;
                     displayPlay(data, player, declarer, data["player"]);
                 }
             } catch (error) {

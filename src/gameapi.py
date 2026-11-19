@@ -2026,7 +2026,7 @@ def autoplay():
         # Print PBN after bidding (for use with game.py verification)
         auction_for_pbn = [bid for bid in auction if bid != 'PAD_START']
         print("\n=== PBN AFTER BIDDING (use as input to game.py) ===")
-        print(f'[Event "BEN Autoplay"]')
+        print(f'[Event "Morty Autoplay"]')
         print(f'[Board "{board_number}"]')
         print(f'[Dealer "{dealer}"]')
         print(f'[Vulnerable "{vuln_str}"]')
@@ -2418,7 +2418,7 @@ def autoplay():
 
         # Print PBN to console for verification with game.py
         print("\n=== PBN OUTPUT (use as input to game.py) ===")
-        print(f'[Event "BEN Autoplay"]')
+        print(f'[Event "Morty Autoplay"]')
         print(f'[Board "{board_number}"]')
         print(f'[Dealer "{dealer}"]')
         print(f'[Vulnerable "{vuln_str}"]')

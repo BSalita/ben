@@ -351,10 +351,10 @@ class Driver:
             pbn_str += '[West "Facit"]\n'
             pbn_str += '[East "Facit"]\n'
         else:
-            pbn_str += '[West "BEN"]\n'
-            pbn_str += '[East "BEN"]\n'
-        pbn_str += '[North "BEN"]\n'
-        pbn_str += '[South "BEN"]\n'
+            pbn_str += '[West "Morty"]\n'
+            pbn_str += '[East "Morty"]\n'
+        pbn_str += '[North "Morty"]\n'
+        pbn_str += '[South "Morty"]\n'
         pbn_str += f'[Dealer "{dealer}"]\n'
         if self.vuln_ns and self.vuln_ew:
             pbn_str += '[Vulnerable "All"]\n'
@@ -478,8 +478,8 @@ class Driver:
             'play_only': self.play_only,
             'bidding_only': self.bidding_only,
             'human': self.human,
-            'opponents': "BEN",
-            'partner': "BEN",
+            'opponents': "Morty",
+            'partner': "Morty",
             'model': self.models.name,
             'version': f'{version}'
         }

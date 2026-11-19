@@ -5,7 +5,7 @@
   <meta http-equiv="Expires" content="0">
 	<head> 
     <meta charset="utf-8">
-		<title>BEN - The open source bridge engine</title> 
+		<title>Morty - built on BEN, the open source bridge engine</title> 
     <link rel="stylesheet" href="/app/style.css">
 	</head> 
 <body> 
@@ -17,7 +17,7 @@
 <div class="container">
   <div class="content">
 <br>
-<p>I have selected this configuration for BEN, but it might change:</p>
+<p>I have selected this configuration for Morty, but it might change:</p>
 
 <ul>     
   <li>21-GF</li>	
@@ -68,14 +68,14 @@
 
   </div>
   <br><br>
-<p>So on the next page you can play deals with BEN, but remember the above conventions and systems in use.
+<p>So on the next page you can play deals with Morty, but remember the above conventions and systems in use.
 For practive purpose EW is playing the same system as WBridge5, so the errors from EW is not as important, and you should focus on Norths bidding.
 It is possible to change the server and bid with 2/1 like GIB.</p>
 
 <p><a href="/home">Play</a></p>
 <p><a href="/gib">GIB system definition</a></p>
 <p><a href="/bba">BBA system definition</a></p> 
-<p><a href="/api">Ask BEN</a></p>
+<p><a href="/api">Ask Morty</a></p>
 <p><a href="https://www.netbridge.dk/bridge/Upload/BEN/Training/html/index.html">Training data</a></p>
 </div>
 
