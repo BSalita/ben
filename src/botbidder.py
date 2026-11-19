@@ -856,7 +856,8 @@ class BotBid:
         return BidResp(bid=candidates[0].bid, candidates=candidates, samples=samples[:self.sample_hands_for_review], shape=p_shp, hcp=p_hcp, who=who, quality=quality, alert = alert, explanation=explain)
     
     def do_rollout(self, auction, candidates, max_candidate_score, sample_count):
-        if candidates[0].insta_score > max_candidate_score:
+        # a call named by the auction model is only there to be simulated, however sure the network is
+        if candidates[0].insta_score > max_candidate_score and not any(c.who == "AuctionModel" for c in candidates):
             if self.verbose:
                 print(f"A candidate above threshold {max_candidate_score}, so no need for rolling out the bidding")
             return False
@@ -1073,6 +1074,45 @@ class BotBid:
                     sys.stderr.write(f"{Fore.CYAN}Adding BBA bid as candidate: {bba_bid_resp.bid} Alert: { bba_bid_resp.alert} Explaination: {bba_bid_resp.explanation}{Fore.RESET}\n")
                 candidates.append(CandidateBid(bid=bba_bid_resp.bid, insta_score=self.models.bba_trust, alert = bba_bid_resp.alert, who="BBA", explanation=bba_bid_resp.explanation))
 
+        # [sampling] auction_model_guard = <points>: about to pass out the other side's partscore while the
+        # auction model expects more from a contract of ours than from defending -> let the search look at it
+        margin = getattr(self.sampler, 'auction_model_guard', None)
+        if margin is not None and getattr(self.sampler, 'auction_model', '') and passout \
+                and max(candidates, key=lambda c: c.insta_score).bid == 'PASS':
+            import auction_model_deals
+            found = auction_model_deals.guard(self.sampler.auction_model, self.hand_str, self.seat, self.dealer, self.vuln, auction, margin)
+            if found is not None and bidding.can_bid(found[0], auction) and all(c.bid != found[0] for c in candidates):
+                candidates.append(CandidateBid(bid=found[0], insta_score=self.models.bba_trust, alert=None, who="AuctionModel",
+                                               explanation=f"expected {found[1]:.0f} against {found[2]:.0f} defending"))
+
+        # [sampling] auction_model_tactical = double,sacrifice,interfere,lead: calls the auction model names for a
+        # purpose (auction-model/tactical.py) join the candidates, so the search looks at calls the network
+        # never rates. auction_model_tactical_trust: their insta_score (a number, default bba_trust), or 'top' =
+        # just under the best candidate's, so that only the simulation decides between them
+        rules = getattr(self.sampler, 'auction_model_tactical', None)
+        if rules and getattr(self.sampler, 'auction_model', ''):
+            import auction_model_deals
+            trust = getattr(self.sampler, 'auction_model_tactical_trust', None)
+            if trust == 'top':
+                score = max(c.insta_score for c in candidates) - 0.01
+            else:
+                score = float(trust) if trust else self.models.bba_trust
+            try:
+                named = auction_model_deals.tactical(self.sampler.auction_model, self.hand_str, self.seat, self.dealer,
+                                                     self.vuln, auction, rules, matchpoint=bool(self.models.matchpoint))
+            except Exception as error:
+                # a server must still bid when the model cannot be loaded or fails on a position
+                sys.stderr.write(f"{Fore.RED}auction model gave no calls: {type(error).__name__}: {error}{Fore.RESET}\n")
+                named = []
+            for bid, rule, text in named:
+                # an interfering bid never goes in below a bid of the same suit that is already a candidate
+                if rule.startswith("interfere") and any(c.bid[0].isdigit() and c.bid[1] == bid[1] and c.bid[0] > bid[0]
+                                                        for c in candidates):
+                    continue
+                if bidding.can_bid(bid, auction) and all(c.bid != bid for c in candidates):
+                    candidates.append(CandidateBid(bid=bid, insta_score=score, alert=None, who="AuctionModel",
+                                                   explanation=f"{rule}: {text}"))
+
         return candidates, passout
 
     def next_bid_np(self, auction):
@@ -1110,6 +1150,26 @@ class BotBid:
     def sample_hands_for_auction(self, auction_so_far, turn_to_bid):
         # Reset randomizer
         self.rng = self.get_random_generator()
+
+        # [sampling] test_true_deal_file = <Brill field file>: measurement only, every sample is the real deal
+        # (cards below the ones the bidding format names are still dealt at random by translate_hands)
+        if getattr(self.sampler, 'test_true_deal_file', ''):
+            import auction_model_deals
+            real = auction_model_deals.true_deal(self.sampler.test_true_deal_file, turn_to_bid, self.hand_str)
+            n = self.sampler.sample_hands_auction
+            hands_np = np.zeros((n, 4, self.models.n_cards_bidding), dtype=np.int32)
+            for s in range(4):
+                hands_np[:, s, :] = binary.parse_hand_f(self.models.n_cards_bidding)(real[s])
+            return hands_np, np.ones(n), np.zeros(3), np.zeros(12), 1.0
+
+        # [sampling] auction_model = <run folder>: deals drawn from the auction model (src/auction-model)
+        # instead of this sampler; every deal is legal, so no filtering and quality is 1
+        if getattr(self.sampler, 'auction_model', '') and getattr(self.sampler, 'auction_model_deals', True):
+            import auction_model_deals
+            hands_np, p_hcp, p_shp, _ = auction_model_deals.deals(
+                self.sampler.auction_model, self.hand_str, turn_to_bid, self.dealer, self.vuln, auction_so_far,
+                self.sampler.sample_hands_auction, self.rng, self.models.n_cards_bidding, self.hash_integer % (2 ** 31))
+            return hands_np, np.ones(hands_np.shape[0]), p_hcp, p_shp, 1.0
 
         aceking = {}
         if self.models.use_bba_to_count_aces:
