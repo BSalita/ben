@@ -70,7 +70,10 @@ def autoplay(board, walk):
     if data.get('error'):
         raise RuntimeError(data['error'])
     ours = contract_of(walk, board['dealer'])
-    played = (data['contract'].replace('NT', 'N'), data['declarer'])
+    contract = data['contract'].replace('NT', 'N')
+    if contract.endswith('XXX'):
+        contract = contract[:-1]    # the service writes a redoubled contract as X + XX: 2DXXX
+    played = (contract, data['declarer'])
     expected = (f'{ours[0]}{ours[1]}{ours[2]}', ours[3])
     if played != expected:
         raise RuntimeError(f'the service played {played}, the auction gives {expected}')
@@ -93,6 +96,8 @@ def main():
             key = (r['tournament_id'], r['board'])
             if 'error' not in r:
                 done.add(key)
+            elif "XXX'" in r['error']:
+                continue    # a redoubled contract refused by the contract check before 2026-11-19: not a failed attempt
             else:
                 failed[key] = failed.get(key, 0) + 1
     given_up = {key for key, n in failed.items() if n >= GIVE_UP and key not in done}
