@@ -18,6 +18,11 @@ Requests go one at a time over all workers and over every run that shares the
 call, and the meaning Brill gives it), so a second config, at the same time or
 later, only asks about auctions the first did not reach.
 
+--daily-budget N caps the requests of one calendar day (UTC) over every run that
+shares the --cache file: the count is kept beside it (CACHE.budget.json). When
+the day's budget is used up, the boards that still need an answer fail with
+"daily budget" as the reason and the run ends; --resume on a later day goes on.
+
 Output: OUT/replay.jsonl in brill_replay.py's format (walk, status 'service',
 south_calls for the South turns on the way), scored by score_brill_replay.py.
 """
@@ -43,6 +48,29 @@ from brill_replay import SEATS, VULN, W, ab_match, from_ben, to_ben  # noqa: E40
 BASE = 'https://brillservice.aalborgdata.dk'
 TO_CTX = {'P': '--', 'X': 'Db', 'XX': 'Rd'}
 FROM_SERVICE = {'PASS': 'P', 'Pass': 'P', '--': 'P', 'Db': 'X', 'DBL': 'X', 'Rd': 'XX', 'RDBL': 'XX'}
+
+
+class BudgetExhausted(RuntimeError):
+    pass
+
+
+def budget_take(cfg):
+    """Count one request against the day's budget; call with the cache lock held."""
+    if not cfg.get('daily_budget'):
+        return
+    path = cfg['cache'] + '.budget.json'
+    today = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
+    try:
+        with open(path) as f:
+            state = json.load(f)
+    except (FileNotFoundError, ValueError):
+        state = {}
+    used = state.get('used', 0) if state.get('date') == today else 0
+    if used >= cfg['daily_budget']:
+        raise BudgetExhausted(f"daily budget of {cfg['daily_budget']} requests to Brill's service is used up ({today})")
+    with open(path + '.new', 'w') as f:
+        json.dump({'date': today, 'used': used + 1, 'limit': cfg['daily_budget']}, f)
+    os.replace(path + '.new', path)
 
 
 class FileLock:
@@ -97,6 +125,7 @@ def robot_call(board, seat_i, hand, calls):
         query = {'hand': hand, 'seat': SEATS[seat_i], 'dealer': board['dealer'], 'vul': board['vul'],
                  'ctx': ctx, 'board': board['board'], 'scoring': board['scoring']}
         url = f"{cfg['url']}/bid?{urllib.parse.urlencode(query)}"
+        budget_take(cfg)
         for attempt in range(4):
             try:
                 request = urllib.request.Request(url, headers={'User-Agent': 'brill-replay'})
@@ -171,6 +200,8 @@ def main():
     parser.add_argument('--cache', required=True, help="the robots' answers, shared by every config's run")
     parser.add_argument('--url', default=BASE)
     parser.add_argument('--pause', type=float, default=0.0, help='seconds to wait after each request')
+    parser.add_argument('--daily-budget', type=int, default=0,
+                        help='most requests in one calendar day (UTC) over all runs sharing --cache; 0 = no cap')
     parser.add_argument('--matchpoint', default='event', choices=['event', 'true', 'false'])
     parser.add_argument('--limit', type=int, default=0, help='only the last N boards of the file')
     parser.add_argument('--workers', type=int, default=8)
@@ -200,6 +231,7 @@ def main():
 
     cfg = {'conf': ab_match.resolve(args.conf), 'robots': None, 'out': args.out, 'matchpoint': args.matchpoint,
            'cache': os.path.abspath(args.cache), 'url': args.url.rstrip('/'), 'pause': args.pause,
+           'daily_budget': args.daily_budget,
            'dds_threads': args.dds_threads, 'tf_threads': args.tf_threads}
     with open(os.path.join(args.out, 'run.json'), 'w') as f:
         json.dump({'argv': sys.argv, 'cfg': cfg, 'boards': len(boards), 'git': ab_match.git_head(),
