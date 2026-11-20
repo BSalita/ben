@@ -105,7 +105,7 @@ tr.below > td { border-top: 2px solid var(--line); }
   </section>
   <section>
     <h2>Top ten of each event, day by day</h2>
-    <p class="lede" style="margin:0 0 12px">The standings of each event of one day with Morty AI's table added to every board's field. Entrants who played all the event's boards are ranked. Morty AI is the shaded row; when it is outside the top ten it is added below with its rank.</p>
+    <p class="lede" style="margin:0 0 12px">The standings of each event of one day. Morty AI's row is its own table in the events it entered and, before that, its replay added to every board's field. Entrants who played all the event's boards are ranked. Morty AI is the shaded row; when it is outside the top ten it is added below with its rank.</p>
     <div class="controls">
       <button class="btn" id="day-prev">◂ Earlier day</button>
       <label>Day<select id="day"></select></label>
@@ -142,13 +142,13 @@ tr.below > td { border-top: 2px solid var(--line); }
   </section>
   <section class="defs">
     <h2 style="color:var(--fg)">Columns</h2>
-    <div><b>Contract, By, Result, Score</b> Morty AI bids South; North, East and West make the calls the Brill robots made. Brill's robots then play all four hands. Score is North-South's.</div>
+    <div><b>Contract, By, Result, Score</b> In the events Morty AI entered, its table in the event. Before that, a replay: Morty AI bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.</div>
     <div><b>Pct / IMP</b> Our score against every real table of the board: matchpoint percentage in MP events, average cross-IMPs in IMP events.</div>
     <div><b>DD</b> The double-dummy result of our contract and its North-South score.</div>
     <div><b>DD_EV</b> The expected North-South score of our contract when the two hands of the non-declaring side are dealt at random (40 deals, each solved double dummy).</div>
     <div><b>Par</b> The double-dummy par score and contract.</div>
     <div><b>Par_EV</b> The DD_EV of the par contract: its expected North-South score by the same random deals. With several par contracts, the highest of their expected scores. The solver names a par contract at the lowest level that earns the par score (1♠ making nine tricks, not 3♠), and that contract is the one valued.</div>
-    <div><b>Result from</b> "Brill table": the Brill entrant had our auction, or played our contract, in the event. "Autoplay": Brill's service played our auction now. "DD, autoplay pending": not played yet; the double-dummy result stands in.</div>
+    <div><b>Result from</b> "Played in the event": Morty AI's own table as an entrant. "Brill table": the Brill entrant had our auction, or played our contract, in the event. "Autoplay": Brill's service played our auction now. "DD, autoplay pending": not played yet; the double-dummy result stands in.</div>
   </section>
 </div>
 
@@ -164,12 +164,14 @@ const parText = t => esc(t).replace(/(\d)(NT|[SHDC])/g, (m, l, s) => l + suit(s[
 const signed = (x, d = 0) => x == null ? '' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d);
 const tone = b => b.sc === 'MP' ? (b.pct >= 65 ? 'good' : b.pct <= 35 ? 'bad' : '') : (b.imp >= 2 ? 'good' : b.imp <= -2 ? 'bad' : '');
 const measure = b => b.sc === 'MP' ? b.pct.toFixed(0) + '%' : signed(b.imp, 1);
-const SRC = {'brill-auction': 'Brill table, same auction', 'brill-contract': 'Brill table, same contract', 'autoplay': 'Autoplay', 'dd-pending': 'DD, autoplay pending', 'passout': 'Passed out'};
+const SRC = {'played': 'Played in the event', 'brill-auction': 'Brill table, same auction', 'brill-contract': 'Brill table, same contract', 'autoplay': 'Autoplay', 'dd-pending': 'DD, autoplay pending', 'passout': 'Passed out'};
 const eventOf = Object.fromEntries(D.events.map(e => [e.id, e]));
 const boardsOf = {};
 D.boards.forEach(b => (boardsOf[b.t] = boardsOf[b.t] || []).push(b));
 
-$('lede').textContent = `Morty AI (bidding model ${D.model}) seated South in ${D.events.length} closed Brill daily events, ${D.boards.length} boards, ${D.first} to ${D.last}. Made ${D.made}.`;
+$('lede').textContent = `Morty AI seated South in ${D.events.length} closed Brill daily events, ${D.boards.length} boards, ${D.first} to ${D.last}. ` +
+  (D.entered ? `Since ${D.entered.first} Morty AI is an entrant of the dailies (listed there as MortyAI): its ${D.entered.events} events since then, ${D.entered.boards} boards, are its real tables. The earlier events are a replay of bidding model ${D.model} against the calls the Brill robots made. ` : `A replay of bidding model ${D.model} against the calls the Brill robots made. `) +
+  `Made ${D.made}.`;
 if (D.pending) { $('pending').hidden = false; $('pending').textContent = `${D.pending} of ${D.boards.length} boards still wait for Brill's autoplay and show the double-dummy result of our contract instead. They are marked in the last column and the page is rebuilt as results arrive.`; }
 $('figures').innerHTML = D.figures.map(f => `<div class="figure"><b>${esc(f.value)}</b><span>${esc(f.label)}</span></div>`).join('');
 
@@ -190,7 +192,7 @@ function rankChart(rows, scoring, life) {
       `<td class="n">${fmt(r[2])}</td>${life ? `<td class="n">${r[4]}</td><td class="n">${r[5]}</td><td class="n">${r[6]}</td>` : ''}</tr>`;
   }).join('');
 }
-$('lifetime-lede').textContent = `Each entrant's average board over the events it completed, with Morty AI's table added to every board's field. Ranked are the entrants with at least ${D.lifetime_min} events of that scoring. They did not all play the same events: Morty AI is seated in every one, the others in those they entered.`;
+$('lifetime-lede').textContent = `Each entrant's average board over the events it completed. Morty AI's average joins its replay of the events before it entered with its own tables since. Ranked are the entrants with at least ${D.lifetime_min} events of that scoring. They did not all play the same events: Morty AI is seated in every one, the others in those they entered.`;
 $('lifetime').innerHTML = ['MP', 'IMP'].filter(sc => D.lifetime[sc]).map(sc => { const n = D.events.filter(e => e.scoring === sc).length;
   return `<div><h3>${sc === 'MP' ? 'Matchpoint events' : 'IMP events'}<span class="sub">${n} events, ${D.lifetime[sc].ranked} ranked entrants</span></h3><div class="scroll"><table class="rank">${rankChart(D.lifetime[sc].rows, sc, true)}</table></div></div>`; }).join('');
 

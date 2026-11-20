@@ -42,6 +42,20 @@ def is_daily(board):
     return board['event'].startswith('Daily')
 
 
+ENTRANT = 'R:MortyAI'   # our model as a real entrant of the dailies (first event 2026-11-19)
+
+
+def entered_events(field):
+    """The events our model played itself: it has a table at every board of the event.
+    For these the event's own table is our result, and no replay or autoplay stands in."""
+    boards, ours = {}, {}
+    for b in field:
+        boards[b['tournament_id']] = boards.get(b['tournament_id'], 0) + 1
+        if any(t['player_id'] == ENTRANT for t in b['tables']):
+            ours[b['tournament_id']] = ours.get(b['tournament_id'], 0) + 1
+    return {t for t, n in ours.items() if n == boards[t]}
+
+
 def brill_source(board, walk):
     """Where Brill's play of this auction's contract comes from, and the Brill entrant's table if it is used."""
     ours = contract_of(walk, board['dealer'])
@@ -102,11 +116,13 @@ def main():
             else:
                 failed[key] = failed.get(key, 0) + 1
     given_up = {key for key, n in failed.items() if n >= GIVE_UP and key not in done}
+    entered = entered_events(field.values())
     todo = []
     for r in replay:
         key = (r['tournament_id'], r['board'])
         board = field[key]
         if ('error' in r or key in done or key in given_up or not is_daily(board)
+                or r['tournament_id'] in entered
                 or brill_source(board, r['walk'])[0] != 'autoplay'):
             continue
         at_a_table = any(table_contract(t) == contract_of(r['walk'], board['dealer']) for t in board['tables'])

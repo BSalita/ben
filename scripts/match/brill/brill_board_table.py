@@ -8,6 +8,10 @@ contract, else the Brill service's /autoplay of our auction (brill_autoplay.py).
 A board whose autoplay is not in AUTOPLAY.jsonl yet gets the double dummy result
 and result_source 'dd-pending'.
 
+Since 2026-11-19 the model is an entrant of the dailies itself (R:MortyAI). In an
+event it played, its own table is the row (result_source 'played', robots 'live')
+and the replay is not used; its table is never also counted as one of the field.
+
 DD_EV and Par_EV are the single-dummy expected values of mlBridgeAugmentLib
 (EV_Score and EV_Max), from the trick probabilities of brill_sd_probs.py:
   dd_ev    the expected North-South score of our contract, over random deals of
@@ -15,8 +19,8 @@ DD_EV and Par_EV are the single-dummy expected values of mlBridgeAugmentLib
   par_ev   the dd_ev of the par contract; with several par contracts, the highest
            of their expected scores (North-South's view)
 
-Standings: every entrant's boards are scored again with our table added to the
-field. standings.csv has every event's ranking of the entrants who played all its
+Standings: every entrant's boards are scored again with our table (the replay, or
+the event's own table once the model had entered) in the field. standings.csv has every event's ranking of the entrants who played all its
 boards (our model, named Morty AI, is player_id OURS); lifetime.csv has each entrant's average
 board over its events of one scoring, ranked among those with 20 or more events.
 """
@@ -32,7 +36,7 @@ from tqdm import tqdm
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from brill_autoplay import brill_source, is_daily  # noqa: E402
+from brill_autoplay import ENTRANT, brill_source, entered_events, is_daily  # noqa: E402
 from score_brill_replay import contract_of, imps, score_ns, table_contract  # noqa: E402
 
 SEATS = 'NESW'
@@ -126,16 +130,29 @@ def main():
     dd = dd_and_par(field, out_dir / 'dd.json')
     sd_all = json.loads(sd_path.read_text(encoding='utf-8'))['deals']
 
+    # Since 2026-11-19 our model is an entrant itself (ENTRANT). In an event it played, its own
+    # table is our result; in every other event the replay is. Its table never also counts as
+    # one of the field, so each event and the lifetime table hold one row for it.
+    entered = entered_events(field)
+    print(f'{len(entered)} events played by {ENTRANT} itself: their tables are used, not the replay')
+
     rows, standings = [], []
     for b in field:
         key = (b['tournament_id'], b['board'])
+        own = next((t for t in b['tables'] if t['player_id'] == ENTRANT), None) if b['tournament_id'] in entered else None
+        b = dict(b, tables=[t for t in b['tables'] if t['player_id'] != ENTRANT])
         r = replay.get(key)
-        if r is None or 'error' in r:
+        if own is None and (r is None or 'error' in r):
             raise SystemExit(f'board {key} has no replay')
         info = dd[f"{b['deal']}|{b['dealer']}|{b['vul']}"]
-        walk = r['walk']
+        walk = r['walk'] if own is None else own['auction']
         contract = contract_of(walk, b['dealer'])
-        source, table = brill_source(b, walk)
+        if own is None:
+            source, table = brill_source(b, walk)
+        else:
+            if table_contract(own) != contract:
+                raise SystemExit(f'board {key}: the contract of our table does not follow from its auction')
+            source, table = ('passout' if contract is None else 'played'), own
         if b['deal'] not in sd_all:
             raise SystemExit(f'board {key}: no single-dummy probabilities in {sd_path}')
         sd = sd_all[b['deal']]
@@ -176,13 +193,14 @@ def main():
             'imp_dd_vs_par': int(imps(dd_score - info['par_score'])),
             'imp_ev_vs_par_ev': int(imps(round(dd_ev) - round(par_ev_score))),
             'imp_play_vs_dd': int(imps(score - dd_score)),
-            'result_source': source, 'robots': 'recorded' if r['status'] == 'record' else 'simulated',
+            'result_source': source,
+            'robots': 'live' if own is not None else 'recorded' if r['status'] == 'record' else 'simulated',
             'tables': len(scores), 'field_median': int(np.median(scores)), 'field_common': common,
             'field_common_share': round(contracts.count(common) / len(contracts) * 100),
             'brill_contract': None if brill is None else (brill['contract'] + ' ' + brill['declarer'] if brill['declarer'] else 'Pass'),
             'brill_score': None if brill is None else brill['ns_score'],
         })
-        # every entrant's result on this board with our table added to the field
+        # every entrant's result on this board with our table (the event's own, or the replay) in the field
         entries = [(t['player_id'], t['name'], t['ns_score']) for t in b['tables']] + [(US, OUR_NAME, score)]
         for i, (player, name, mine) in enumerate(entries):
             others = [s for j, (_, _, s) in enumerate(entries) if j != i]

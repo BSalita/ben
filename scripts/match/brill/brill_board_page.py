@@ -172,7 +172,11 @@ def main():
     life = pl.read_csv(out_dir / 'lifetime.csv').filter(pl.col('rank').is_not_null()).sort('rank', 'name')
     lifetime = {t[0]: {'ranked': g['ranked'][0], 'rows': top(g.iter_rows(named=True), ('events', 'wins', 'top3'))}
                 for t, g in life.group_by('scoring')}
+    # the events our model played itself as an entrant: their rows are its real tables, not the replay
+    live = boards.filter(pl.col('robots') == 'live')
+    entered = {'events': live['tournament_id'].n_unique(), 'boards': live.height, 'first': live['date'].min()} if live.height else None
     data = {'made': f'{datetime.now():%Y-%m-%d %H:%M}', 'model': model, 'first': boards['date'].min(), 'last': boards['date'].max(),
+            'entered': entered,
             'ranks': ranks, 'lifetime': lifetime, 'lifetime_min': LIFETIME_MIN_EVENTS,
             'pending': int((boards['result_source'] == 'dd-pending').sum()), 'figures': figures, 'groups': groups,
             'best': best, 'worst': worst, 'events': page_events, 'boards': page_boards}
