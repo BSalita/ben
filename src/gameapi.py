@@ -48,6 +48,7 @@ import datetime
 import time
 
 from botbidder import BotBid
+import disclosure
 from botopeninglead import BotLead
 from botcardplayer import CardPlayer
 from bidding import bidding
@@ -1166,6 +1167,13 @@ def bid():
                 explanation, alert = hint_bot.explain_last_bid(auction_with_bid)
             else:
                 explanation, alert = hint_bot.bbabot.explain_last_bid(auction_with_bid)
+                # [sampling] disclosure_calibration: the numbers widened to what our calls show in practice
+                calibration = getattr(hint_bot.sampler, 'disclosure_calibration', '')
+                if calibration:
+                    try:
+                        explanation = disclosure.calibrate_text(explanation, bid.bid, disclosure.load(calibration))
+                    except Exception as error:      # the call still goes out, with EPBot's own numbers
+                        print(f"disclosure calibration not applied: {type(error).__name__}: {error}", flush=True)
             result["explanation"] = explanation
             # A JSON boolean: the text "False" is truthy to a JavaScript client
             result["alert"] = as_bool(alert)
@@ -1173,6 +1181,11 @@ def bid():
             if "candidates" in result and len(result["candidates"]) > 0:
                 result["candidates"][0]["explanation"] = explanation
                 result["candidates"][0]["alert"] = as_bool(alert)
+            # Log an explanation, as sent, that our own hand is outside (the disclosure-audit tool finds them offline)
+            wrong = disclosure.outside(explanation, hand)
+            if wrong:
+                print(f"DISCLOSURE-MISFIT seat={seat} hand={hand} dealer={dealer} auction={'-'.join(auction)} bid={bid.bid} "
+                      f"wrong={'; '.join(wrong)!r} explanation={explanation!r}", flush=True)
         except Exception as e:
             if verbose:
                 print(f"Could not get explanation for bid: {e}")
