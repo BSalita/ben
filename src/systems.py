@@ -106,6 +106,7 @@ class Systems:
             if section.get('reader_info', 'none') not in ('none', ''):
                 reader_info_model = load_model(section['reader_info'], BidInfo)
             systems[name.upper()] = System(name.upper(), cc, plays, bidder_model, info_model, reader_model, reader_info_model)
+        path_provider.release()     # every network is loaded: the temporary copies can go
 
         # The names of what the server plays when a request does not say
         def find(path, cc, model_of):
