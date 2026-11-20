@@ -174,6 +174,9 @@ class Sample:
         tactical = conf.get('sampling', 'auction_model_tactical', fallback='')
         sample.auction_model_tactical = [r.strip() for r in tactical.split(',') if r.strip()]
         sample.auction_model_tactical_trust = conf.get('sampling', 'auction_model_tactical_trust', fallback='').strip() or None
+        # disclosure_calibration = <file>: the explanation the REST API sends has its numbers widened to what our
+        # calls show in practice (src/disclosure.py; the file is fitted with the disclosure-audit tool; empty = off)
+        sample.disclosure_calibration = conf.get('sampling', 'disclosure_calibration', fallback='').strip()
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
