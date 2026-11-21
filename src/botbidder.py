@@ -188,6 +188,39 @@ class BotBid:
 
         return False
     
+    def artificial_guard(self, auction, candidates):
+        """[sampling] artificial_guard = <cards>: drop a candidate that is not the network's first choice when
+        EPBot reads it as an artificial call and this hand is outside the suit lengths EPBot states for it by
+        that many cards in some suit (a 2D Cappelletti for both majors with a heart void). Partner reads such
+        a call as the convention, so the search's verdict on it is not to be trusted. The network's first
+        choice is never dropped, nor a call the auction model named for a purpose. Empty = off."""
+        limit = getattr(self.sampler, 'artificial_guard', None)
+        if not limit or len(candidates) < 2:
+            return candidates
+        try:
+            if self.bbabot is None:
+                return candidates
+            top = max(c.insta_score for c in candidates)
+            held = [len(s) for s in reversed(self.hand_str.split('.'))]      # EPBot's order: clubs first
+            kept = []
+            for c in candidates:
+                if c.insta_score < top and c.who != "AuctionModel" and c.bid not in ('PASS', 'X', 'XX'):
+                    _, artificial = self.bbabot.explain_last_bid(auction + [c.bid])
+                    if artificial:
+                        player = self.bbabot.players[self.bbabot.position]
+                        least = player.get_info_min_length(self.seat)
+                        most = player.get_info_max_length(self.seat)
+                        cards = max(max(int(least[k]) - held[k], held[k] - int(most[k]), 0) for k in range(4))
+                        if cards >= limit:
+                            if self.verbose:
+                                print(f"artificial_guard: {c.bid} dropped, hand {cards} cards outside its meaning")
+                            continue
+                kept.append(c)
+            return kept
+        except Exception as error:      # the guard is advice: on any failure the candidates stay as they were
+            sys.stderr.write(f"artificial_guard: {type(error).__name__}: {error}\n")
+            return candidates
+
     def get_min_candidate_score(self, bid_no):
         if isinstance(self.min_candidate_score, list):
             # Get the element at index i, or the last element if i is out of bounds
@@ -240,6 +273,7 @@ class BotBid:
 
         self.my_bid_no = self.get_bid_number_for_player_to_bid(auction)
         candidates, passout = self.get_bid_candidates(auction)
+        candidates = self.artificial_guard(auction, candidates)
         quality = 1
         hands_np = None
         samples = []

@@ -177,6 +177,10 @@ class Sample:
         # disclosure_calibration = <file>: the explanation the REST API sends has its numbers widened to what our
         # calls show in practice (src/disclosure.py; the file is fitted with the disclosure-audit tool; empty = off)
         sample.disclosure_calibration = conf.get('sampling', 'disclosure_calibration', fallback='').strip()
+        # artificial_guard = <cards>: a search candidate other than the network's first choice is dropped when
+        # EPBot reads it as artificial and our hand is that many cards outside its stated lengths (empty = off)
+        guard = conf.get('sampling', 'artificial_guard', fallback='').strip()
+        sample.artificial_guard = int(guard) if guard else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
