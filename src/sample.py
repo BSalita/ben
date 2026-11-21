@@ -185,6 +185,10 @@ class Sample:
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()
         sample.second_call_2nt_to_3nt = int(nt) if nt else None
+        # five_card_two_over_one = <HCP>: over partner's 1H/1S and a pass, the forcing 1NT becomes two of the one
+        # five-card lower suit (no six-card suit, two cards or fewer in partner's major) with that many HCP
+        five = conf.get('sampling', 'five_card_two_over_one', fallback='').strip()
+        sample.five_card_two_over_one = int(five) if five else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
