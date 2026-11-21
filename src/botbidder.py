@@ -215,6 +215,30 @@ class BotBid:
             print(f"six_card_jump_to_two: {chosen} becomes 2{chosen[1]} with {hcp} HCP")
         return '2' + chosen[1]
 
+    def second_call_2nt_to_3nt(self, auction, chosen):
+        """[sampling] second_call_2nt_to_3nt = <HCP>: responder's second call in an auction the opponents have
+        passed throughout (partner opened one of a suit, we responded, partner rebid): the invitational 2NT
+        becomes 3NT with at least that many HCP. Measured in the morty-book candidate search (2026-11-21):
+        with 12 HCP 3NT gained +0.95 IMPs a position (791 positions, single-dummy EV) because partner passes
+        2NT about half the time; nothing with 11. Returns the call to make instead, or None. Empty = off."""
+        least = getattr(self.sampler, 'second_call_2nt_to_3nt', None)
+        if not least or chosen != '2N':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) < 6:
+            return None
+        lead, tail = calls[:-6], calls[-6:]
+        if any(c != 'PASS' for c in lead) or tail[0] not in ('1C', '1D', '1H', '1S'):
+            return None
+        if any(tail[k] != 'PASS' for k in (1, 3, 5)) or any(tail[k] in ('PASS', 'X', 'XX') for k in (2, 4)):
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if hcp < least:
+            return None
+        if self.verbose:
+            print(f"second_call_2nt_to_3nt: 2N becomes 3N with {hcp} HCP")
+        return '3N'
+
     def get_min_candidate_score(self, bid_no):
         if isinstance(self.min_candidate_score, list):
             # Get the element at index i, or the last element if i is out of bounds
@@ -872,7 +896,8 @@ class BotBid:
             if self.verbose:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
 
-        rule_bid = self.six_card_jump_to_two(auction, candidates[0].bid)
+        rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
+                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
             who = "Rule"
