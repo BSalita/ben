@@ -181,6 +181,10 @@ class Sample:
         # EPBot reads it as artificial and our hand is that many cards outside its stated lengths (empty = off)
         guard = conf.get('sampling', 'artificial_guard', fallback='').strip()
         sample.artificial_guard = int(guard) if guard else None
+        # six_card_jump_to_two = <HCP>: over partner's 1H/1S and a pass, the jump to three of a lower suit becomes
+        # the game-forcing two of it with six cards in the suit and at least that many HCP (empty = off)
+        jump = conf.get('sampling', 'six_card_jump_to_two', fallback='').strip()
+        sample.six_card_jump_to_two = int(jump) if jump else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
