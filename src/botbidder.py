@@ -278,6 +278,30 @@ class BotBid:
             print(f"five_card_two_over_one: 1N becomes 2{strains[five]} with {hcp} HCP")
         return '2' + strains[five]
 
+    def drury_to_raise(self, auction, chosen):
+        """[sampling] drury_to_raise = <HCP>: a passed hand over partner's 1H or 1S (third or fourth seat) and a
+        pass: the search's Drury 2C becomes the simple raise to two of the major when this hand holds exactly
+        three cards in the major and at most that many HCP. Found by the morty-book's second candidate search
+        (strong human players raise there; forced test +0.53 IMPs a position with 8-9 HCP). Returns the call
+        to make instead, or None. Empty = off."""
+        most = getattr(self.sampler, 'drury_to_raise', None)
+        if not most or chosen != '2C':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (4, 5) or calls[-1] != 'PASS' or calls[-2] not in ('1H', '1S'):
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        major = calls[-2][1]
+        if len(self.hand_str.split('.')['SHDC'.index(major)]) != 3:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if hcp > most:
+            return None
+        if self.verbose:
+            print(f"drury_to_raise: 2C becomes 2{major} with {hcp} HCP")
+        return '2' + major
+
     def second_call_2nt_to_3nt(self, auction, chosen):
         """[sampling] second_call_2nt_to_3nt = <HCP>: responder's second call in an auction the opponents have
         passed throughout (partner opened one of a suit, we responded, partner rebid): the invitational 2NT
@@ -962,6 +986,7 @@ class BotBid:
 
         rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
                     or self.five_card_two_over_one(auction, candidates[0].bid)
+                    or self.drury_to_raise(auction, candidates[0].bid)
                     or self.second_call_2nt_to_3nt(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))

@@ -193,6 +193,10 @@ class Sample:
         # five-card lower suit (no six-card suit, two cards or fewer in partner's major) with that many HCP
         five = conf.get('sampling', 'five_card_two_over_one', fallback='').strip()
         sample.five_card_two_over_one = int(five) if five else None
+        # drury_to_raise = <HCP>: a passed hand's Drury 2C over partner's 1H/1S becomes the raise to two with exactly
+        # three trumps and at most that many HCP (empty = off)
+        dr = conf.get('sampling', 'drury_to_raise', fallback='').strip()
+        sample.drury_to_raise = int(dr) if dr else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
