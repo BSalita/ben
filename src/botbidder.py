@@ -188,6 +188,33 @@ class BotBid:
 
         return False
     
+    def six_card_jump_to_two(self, auction, chosen):
+        """[sampling] six_card_jump_to_two = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
+        the jump to three of a lower-ranking suit becomes two of it (game forcing in 2/1) when this hand holds
+        six cards or more in that suit and at least that many HCP. Measured in the morty-book (compare section
+        21): on the deals where Morty made the jump, two of the suit gained +1.34 IMPs a deal with 11 HCP and
+        +2.70 with 12, nothing with 10. Returns the call to make instead, or None. Empty = off."""
+        least = getattr(self.sampler, 'six_card_jump_to_two', None)
+        if not least or len(chosen) != 2 or chosen[0] != '3' or chosen[1] not in 'CDH':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (2, 3) or calls[-1] != 'PASS' or calls[-2] not in ('1H', '1S'):
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        strains = 'SHDC'
+        if strains.index(chosen[1]) <= strains.index(calls[-2][1]):
+            return None
+        suits = self.hand_str.split('.')
+        if len(suits[strains.index(chosen[1])]) < 6:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if hcp < least:
+            return None
+        if self.verbose:
+            print(f"six_card_jump_to_two: {chosen} becomes 2{chosen[1]} with {hcp} HCP")
+        return '2' + chosen[1]
+
     def get_min_candidate_score(self, bid_no):
         if isinstance(self.min_candidate_score, list):
             # Get the element at index i, or the last element if i is out of bounds
@@ -844,6 +871,11 @@ class BotBid:
         else:
             if self.verbose:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
+
+        rule_bid = self.six_card_jump_to_two(auction, candidates[0].bid)
+        if rule_bid:
+            candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
+            who = "Rule"
 
         explain = candidates[0].explanation
         alert = bool(candidates[0].alert)
