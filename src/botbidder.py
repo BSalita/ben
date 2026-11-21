@@ -248,6 +248,36 @@ class BotBid:
             print(f"six_card_jump_to_two: {chosen} becomes 2{chosen[1]} with {hcp} HCP")
         return '2' + chosen[1]
 
+    def five_card_two_over_one(self, auction, chosen):
+        """[sampling] five_card_two_over_one = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
+        the forcing 1NT becomes two of a five-card suit ranking below partner's major (game forcing in 2/1)
+        when this hand has exactly one five-card suit, no six-card suit, at most two cards in partner's major
+        and at least that many HCP. Measured in the morty-book candidate search (2026-11-21): with 12 HCP two
+        of the suit gained +0.67 IMPs a position (581 positions, single-dummy EV); nothing with 11. Returns
+        the call to make instead, or None. Empty = off."""
+        least = getattr(self.sampler, 'five_card_two_over_one', None)
+        if not least or chosen != '1N':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (2, 3) or calls[-1] != 'PASS' or calls[-2] not in ('1H', '1S'):
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        strains = 'SHDC'
+        lengths = [len(s) for s in self.hand_str.split('.')]
+        major = strains.index(calls[-2][1])
+        if max(lengths) >= 6 or lengths[major] > 2 or sum(1 for n in lengths if n >= 5) != 1:
+            return None
+        five = lengths.index(5)
+        if five <= major:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if hcp < least:
+            return None
+        if self.verbose:
+            print(f"five_card_two_over_one: 1N becomes 2{strains[five]} with {hcp} HCP")
+        return '2' + strains[five]
+
     def second_call_2nt_to_3nt(self, auction, chosen):
         """[sampling] second_call_2nt_to_3nt = <HCP>: responder's second call in an auction the opponents have
         passed throughout (partner opened one of a suit, we responded, partner rebid): the invitational 2NT
@@ -931,6 +961,7 @@ class BotBid:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
 
         rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
+                    or self.five_card_two_over_one(auction, candidates[0].bid)
                     or self.second_call_2nt_to_3nt(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
