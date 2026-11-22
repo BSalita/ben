@@ -5,7 +5,10 @@ Run on Windows with the Elo venv (it has the Brill sign-in through postmortem-br
     elo/.venv/Scripts/python.exe ben/scripts/match/brill/fetch_brill_field.py OUT.jsonl [--full]
 
 When OUT.jsonl exists, only events that are not in it yet are downloaded and
-added (a closed event does not change); --full downloads everything again.
+added; --full downloads everything again. The saved events of the last
+RECHECK_DAYS days are downloaded again too, and replaced when the site now holds
+more tables: a closed event can still gain them (the events of 2026-11-20 had one
+table each at 06:45 the next morning and 22 to 27 a day later).
 
 One line per event and board:
   {tournament_id, event, scoring, date, board, dealer, vul, deal,
@@ -19,7 +22,7 @@ import pathlib
 import re
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from tqdm import tqdm
 
@@ -37,6 +40,7 @@ RESULT_COLUMNS = (
     'id,display_name,participant_type,robot_name,user_id,join_order)'
 )
 SEATS = 'NESW'
+RECHECK_DAYS = 3
 
 
 def calls_of(auction):
@@ -69,14 +73,18 @@ def main():
     full = '--full' in sys.argv[2:]
     started = datetime.now()
     print(f'start {started:%Y-%m-%d %H:%M:%S}')
-    # events already in OUT are kept as they are: a closed event does not change
+    # events already in OUT are kept as they are, but for the recent ones, which are checked again
     known = {}
     if out.exists() and not full:
         for line in out.open(encoding='utf-8'):
             known.setdefault(json.loads(line)['tournament_id'], []).append(line)
     tournaments = elo_brill.list_closed_tournaments()
-    ids = [t['id'] for t in tournaments if t['id'] not in known]
-    print(f'{len(tournaments)} closed events, {len(known)} already in {out.name}, {len(ids)} to fetch')
+    cutoff = f'{started - timedelta(days=RECHECK_DAYS):%Y-%m-%d}'
+    recheck = {t['id'] for t in tournaments
+               if t['id'] in known and (t.get('starts_at') or t.get('created_at') or '')[:10] >= cutoff}
+    ids = [t['id'] for t in tournaments if t['id'] not in known or t['id'] in recheck]
+    print(f'{len(tournaments)} closed events, {len(known)} already in {out.name}, {len(ids) - len(recheck)} to fetch, '
+          f'{len(recheck)} of the last {RECHECK_DAYS} days to check again')
     challenge_of = {}
     for i in range(0, len(ids), 40):
         chunk = f'in.({",".join(ids[i:i + 40])})'
@@ -87,7 +95,10 @@ def main():
         }):
             challenge_of.setdefault(row['tournament_id'], row['challenge_id'])
 
-    boards = new_events = 0
+    boards = new_events = grown = 0
+
+    def table_count(lines):
+        return sum(len(json.loads(line)['tables']) for line in lines)
     listed = {t['id'] for t in tournaments}
     temp = out.with_name(out.name + '.new')
     with temp.open('w', encoding='utf-8') as f:
@@ -95,17 +106,18 @@ def main():
             if tournament_id not in listed:
                 f.writelines(lines)
         for t in tqdm(tournaments, disable=not ids):
-            if t['id'] in known:
+            if t['id'] in known and t['id'] not in recheck:
                 f.writelines(known[t['id']])
                 continue
             challenge_id = challenge_of.get(t['id'])
             if not challenge_id:
+                f.writelines(known.get(t['id'], []))
                 continue
             results = brill_client._select('challenge_board_results', {
                 'select': RESULT_COLUMNS, 'challenge_id': f'eq.{challenge_id}',
                 'order': 'board_number.asc'})
             event_time = t.get('starts_at') or t.get('created_at') or ''
-            new_events += 1
+            lines = []
             for number in sorted({r['board_number'] for r in results}):
                 rows = [r for r in results if r['board_number'] == number]
                 with_deal = [r for r in rows if r.get('deal_pbn')]
@@ -129,17 +141,27 @@ def main():
                         'declarer': r.get('declarer') if r.get('declarer') in tuple(SEATS) else None,
                         'tricks': r.get('tricks'), 'ns_score': int(r['ns_score']),
                     })
-                f.write(json.dumps({
+                lines.append(json.dumps({
                     'tournament_id': t['id'], 'event': t.get('name') or '',
                     'scoring': 'IMP' if t.get('scoring_method') == 'imp' else 'MP',
                     'date': event_time[:10], 'board': number, 'dealer': dealer, 'vul': vul,
                     'deal': rotate_to_north(deal, dealer), 'tables': tables,
                 }, ensure_ascii=False) + '\n')
-                boards += 1
+            if t['id'] in known:
+                before, now = table_count(known[t['id']]), table_count(lines)
+                if now <= before:
+                    f.writelines(known[t['id']])
+                    continue
+                print(f"{t.get('name')}: {before} tables saved, {now} on the site now: replaced")
+                grown += 1
+            else:
+                new_events += 1
+                boards += len(lines)
+            f.writelines(lines)
     temp.replace(out)
     ended = datetime.now()
     print(f'end {ended:%Y-%m-%d %H:%M:%S}  elapsed {ended - started}  events {len(tournaments)}  '
-          f'new events {new_events}  new boards {boards}  -> {out}')
+          f'new events {new_events}  new boards {boards}  events with more tables {grown}  -> {out}')
 
 
 if __name__ == '__main__':
