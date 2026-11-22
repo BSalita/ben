@@ -3,8 +3,8 @@
 #   powershell -File ben\scripts\match\brill\daily_update.ps1 [-Model prodnow] [-Conf /var/lib/ben/brill/conf/prodnow.conf]
 #       [-Name ...] [-Engine checkout|image] [-Workers 8] [-NoPublish] [-SkipRebuild]
 #
-# Defaults since 2026-11-22: prod's bidding (the self-play 012 network with the two rules), run from
-# this checkout. The page's model until then: -Model old -Conf /var/lib/ben/ab/conf/old.conf
+# Defaults since 2026-11-22: prod's bidding (the self-play 012 network with its three rules; the
+# five-card two-over-one rule added to prodnow.conf when prod took it at 09:10), run from this checkout. The page's model until then: -Model old -Conf /var/lib/ben/ab/conf/old.conf
 # -Name GIB-BBO-8730-base -Engine image
 #
 # Brill's events close at 06:00; run this after that. Steps:
@@ -26,7 +26,7 @@
 param(
     [string]$Model = "prodnow",
     [string]$Conf = "/var/lib/ben/brill/conf/prodnow.conf",
-    [string]$Name = "self-play 012 bidding with the jump and 2NT-to-3NT rules (prod 2026-11-22)",
+    [string]$Name = "self-play 012 bidding with the jump, 2NT-to-3NT and five-card two-over-one rules (prod 2026-11-22)",
     [string]$Image = "ben:latest",
     [ValidateSet("image", "checkout")]
     [string]$Engine = "checkout",

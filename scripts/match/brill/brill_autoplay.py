@@ -110,18 +110,18 @@ def main():
             r = json.loads(line)
             key = (r['tournament_id'], r['board'])
             if 'error' not in r:
-                done.add(key)
+                done.add(key + (tuple(r['auction']),))   # a board replayed again with another auction is played again
             elif "XXX'" in r['error']:
                 continue    # a redoubled contract refused by the contract check before 2026-11-19: not a failed attempt
             else:
                 failed[key] = failed.get(key, 0) + 1
-    given_up = {key for key, n in failed.items() if n >= GIVE_UP and key not in done}
+    given_up = {key for key, n in failed.items() if n >= GIVE_UP and key not in {d[:2] for d in done}}
     entered = entered_events(field.values())
     todo = []
     for r in replay:
         key = (r['tournament_id'], r['board'])
         board = field[key]
-        if ('error' in r or key in done or key in given_up or not is_daily(board)
+        if ('error' in r or key + (tuple(r['walk']),) in done or key in given_up or not is_daily(board)
                 or r['tournament_id'] in entered
                 or brill_source(board, r['walk'])[0] != 'autoplay'):
             continue

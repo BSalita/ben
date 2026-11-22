@@ -165,9 +165,9 @@ def main():
             dd_tricks = info['tricks'][contract[1] + contract[3]]
             dd_score = score_ns(*contract, dd_tricks, b['vul'])
             if source == 'autoplay':
-                if key in played:
-                    if played[key]['auction'] != walk:
-                        raise SystemExit(f'board {key}: the autoplay is of another auction')
+                # an autoplay of another auction is of an earlier replay of the board (the
+                # setting changed since): the board waits for the autoplay of the new one
+                if key in played and played[key]['auction'] == walk:
                     tricks, score = played[key]['tricks'], played[key]['ns_score']
                 else:
                     source, tricks, score = 'dd-pending', dd_tricks, dd_score
