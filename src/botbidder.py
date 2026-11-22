@@ -326,6 +326,33 @@ class BotBid:
             print(f"second_call_2nt_to_3nt: 2N becomes 3N with {hcp} HCP")
         return '3N'
 
+    def weak_two_diamonds_major(self, auction, chosen):
+        """[sampling] weak_two_diamonds_major = <HCP>: over partner's weak 2D and a pass, with no call of ours yet,
+        the 2NT ask becomes two of our five-card major (natural, forcing) when this hand holds exactly five
+        cards in one major, no other suit of five or more, and from that many HCP up to 18. Found by the
+        morty-book's third candidate search (SAYC's Morty bids the major; forced test +1.14 IMPs a position
+        with the Brill robots, +0.48 with Morty's network in the other seats). Returns the call to make
+        instead, or None. Empty = off."""
+        least = getattr(self.sampler, 'weak_two_diamonds_major', None)
+        if not least or chosen != '2N':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (2, 3) or calls[-1] != 'PASS' or calls[-2] != '2D':
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        lengths = [len(s) for s in self.hand_str.split('.')]
+        fives = [k for k, n in enumerate(lengths) if n >= 5]
+        if len(fives) != 1 or fives[0] not in (0, 1) or lengths[fives[0]] != 5:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if not least <= hcp <= 18:
+            return None
+        major = 'SH'[fives[0]]
+        if self.verbose:
+            print(f"weak_two_diamonds_major: 2N becomes 2{major} with {hcp} HCP")
+        return '2' + major
+
     def get_min_candidate_score(self, bid_no):
         if isinstance(self.min_candidate_score, list):
             # Get the element at index i, or the last element if i is out of bounds
@@ -987,7 +1014,8 @@ class BotBid:
         rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
                     or self.five_card_two_over_one(auction, candidates[0].bid)
                     or self.drury_to_raise(auction, candidates[0].bid)
-                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid))
+                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid)
+                    or self.weak_two_diamonds_major(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
             who = "Rule"

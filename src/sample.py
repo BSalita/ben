@@ -197,6 +197,10 @@ class Sample:
         # three trumps and at most that many HCP (empty = off)
         dr = conf.get('sampling', 'drury_to_raise', fallback='').strip()
         sample.drury_to_raise = int(dr) if dr else None
+        # weak_two_diamonds_major = <HCP>: over partner's weak 2D and a pass, the 2NT ask becomes two of our one
+        # five-card major with that many HCP up to 18 (empty = off)
+        w2 = conf.get('sampling', 'weak_two_diamonds_major', fallback='').strip()
+        sample.weak_two_diamonds_major = int(w2) if w2 else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample
