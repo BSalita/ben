@@ -23,6 +23,10 @@ shares the --cache file: the count is kept beside it (CACHE.budget.json). When
 the day's budget is used up, the boards that still need an answer fail with
 "daily budget" as the reason and the run ends; --resume on a later day goes on.
 
+--ours NS seats the config North as well (both partners), the robots only East-West:
+for a config whose system is not the robots' own (SAYC, SEF), which a robot partner
+would misread. North's calls are in north_calls.
+
 Output: OUT/replay.jsonl in brill_replay.py's format (walk, status 'service',
 south_calls for the South turns on the way), scored by score_brill_replay.py.
 """
@@ -175,21 +179,26 @@ def live(board):
     def ben_auction(calls):
         return ['PAD_START'] * dealer_i + [to_ben(c) for c in calls]
 
-    walk, south_calls, asked = [], {}, 0
+    ours = [SEATS.index(s) for s in cfg.get('ours', 'S')]
+    walk, south_calls, north_calls, asked = [], {}, {}, 0
     while not bidding.auction_over(ben_auction(walk)):
         seat_i = (dealer_i + len(walk)) % 4
-        if seat_i == 2:
+        if seat_i in ours:
             np.random.seed(42)
-            bot = BotBid(vuln, hands[2], W['models'], Sample.from_conf(W['conf']), 2, dealer_i, W['dds'], False, False)
+            bot = BotBid(vuln, hands[seat_i], W['models'], Sample.from_conf(W['conf']), seat_i, dealer_i, W['dds'],
+                         False, False)
             call = from_ben(bot.bid(ben_auction(walk)).bid)
-            south_calls['-'.join(walk)] = call
+            (south_calls if seat_i == 2 else north_calls)['-'.join(walk)] = call
         else:
             call, new = robot_call(board, seat_i, hands[seat_i], walk)
             asked += new
         if not bidding.can_bid(to_ben(call), ben_auction(walk)):
             raise ValueError(f'illegal call {call} by {SEATS[seat_i]} after {walk}')
         walk.append(call)
-    return {'walk': walk, 'status': 'service', 'off_at': None, 'south_calls': south_calls, 'requests': asked}
+    row = {'walk': walk, 'status': 'service', 'off_at': None, 'south_calls': south_calls, 'requests': asked}
+    if north_calls:
+        row['north_calls'] = north_calls
+    return row
 
 
 def main():
@@ -208,6 +217,9 @@ def main():
     parser.add_argument('--dds-threads', type=int, default=4)
     parser.add_argument('--tf-threads', type=int, default=2)
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--ours', default='S', choices=['S', 'NS'],
+                        help='seats the config bids: S (Brill robots North, East, West) or NS (the config is '
+                             'both partners, Brill robots East-West; for systems other than the robots\' own)')
     args = parser.parse_args()
 
     started = datetime.datetime.now()
@@ -231,7 +243,7 @@ def main():
 
     cfg = {'conf': ab_match.resolve(args.conf), 'robots': None, 'out': args.out, 'matchpoint': args.matchpoint,
            'cache': os.path.abspath(args.cache), 'url': args.url.rstrip('/'), 'pause': args.pause,
-           'daily_budget': args.daily_budget,
+           'daily_budget': args.daily_budget, 'ours': args.ours,
            'dds_threads': args.dds_threads, 'tf_threads': args.tf_threads}
     with open(os.path.join(args.out, 'run.json'), 'w') as f:
         json.dump({'argv': sys.argv, 'cfg': cfg, 'boards': len(boards), 'git': ab_match.git_head(),
