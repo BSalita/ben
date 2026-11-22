@@ -12,7 +12,11 @@ table each at 06:45 the next morning and 22 to 27 a day later).
 
 One line per event and board:
   {tournament_id, event, scoring, date, board, dealer, vul, deal,
-   tables: [{player_id, name, type, auction, contract, declarer, tricks, ns_score}]}
+   tables: [{player_id, name, type, auction, contract, declarer, tricks, ns_score, played_at}]}
+
+`played_at` is the time (UTC) the table played the board; events fetched before
+2026-11-22 lack it, except those our entrant played (ENTRANT), which are fetched
+again once to add it: it says which of our models bid the table.
 
 `deal` is 'N:north east south west'; `auction` is the list of calls from the
 dealer on, as P / X / XX / 1C..7N; `vul` is None / NS / EW / All.
@@ -30,12 +34,14 @@ SRC = pathlib.Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(SRC / 'elo'))
 sys.path.insert(0, str(SRC / 'postmortem-brill'))
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import brill_client  # noqa: E402
+from brill_autoplay import ENTRANT  # noqa: E402
 import brill_pbn  # noqa: E402
 import elo_brill  # noqa: E402
 
 RESULT_COLUMNS = (
-    'board_number,contract,declarer,tricks,ns_score,dealer,vulnerability,deal_pbn,auction_pbn,'
+    'board_number,contract,declarer,tricks,ns_score,dealer,vulnerability,deal_pbn,auction_pbn,played_at,'
     'participant_id,participant:challenge_participants!participant_id('
     'id,display_name,participant_type,robot_name,user_id,join_order)'
 )
@@ -80,8 +86,13 @@ def main():
             known.setdefault(json.loads(line)['tournament_id'], []).append(line)
     tournaments = elo_brill.list_closed_tournaments()
     cutoff = f'{started - timedelta(days=RECHECK_DAYS):%Y-%m-%d}'
+    # also our entrant's events saved without the time its tables were played
+    no_time = {tid for tid, lines in known.items()
+               if any(t['player_id'] == ENTRANT and not t.get('played_at')
+                      for line in lines for t in json.loads(line)['tables'])}
     recheck = {t['id'] for t in tournaments
-               if t['id'] in known and (t.get('starts_at') or t.get('created_at') or '')[:10] >= cutoff}
+               if t['id'] in known and ((t.get('starts_at') or t.get('created_at') or '')[:10] >= cutoff
+                                        or t['id'] in no_time)}
     ids = [t['id'] for t in tournaments if t['id'] not in known or t['id'] in recheck]
     print(f'{len(tournaments)} closed events, {len(known)} already in {out.name}, {len(ids) - len(recheck)} to fetch, '
           f'{len(recheck)} of the last {RECHECK_DAYS} days to check again')
@@ -140,6 +151,7 @@ def main():
                         'contract': brill_pbn.contract_to_pbn(r.get('contract')).upper().replace(' ', ''),
                         'declarer': r.get('declarer') if r.get('declarer') in tuple(SEATS) else None,
                         'tricks': r.get('tricks'), 'ns_score': int(r['ns_score']),
+                        'played_at': r.get('played_at'),
                     })
                 lines.append(json.dumps({
                     'tournament_id': t['id'], 'event': t.get('name') or '',
@@ -148,8 +160,9 @@ def main():
                     'deal': rotate_to_north(deal, dealer), 'tables': tables,
                 }, ensure_ascii=False) + '\n')
             if t['id'] in known:
+                # replaced when the site holds more tables, or as many with something added (play times)
                 before, now = table_count(known[t['id']]), table_count(lines)
-                if now <= before:
+                if now < before or (now == before and t['id'] not in no_time):
                     f.writelines(known[t['id']])
                     continue
                 print(f"{t.get('name')}: {before} tables saved, {now} on the site now: replaced")
@@ -161,7 +174,7 @@ def main():
     temp.replace(out)
     ended = datetime.now()
     print(f'end {ended:%Y-%m-%d %H:%M:%S}  elapsed {ended - started}  events {len(tournaments)}  '
-          f'new events {new_events}  new boards {boards}  events with more tables {grown}  -> {out}')
+          f'new events {new_events}  new boards {boards}  saved events replaced {grown}  -> {out}')
 
 
 if __name__ == '__main__':

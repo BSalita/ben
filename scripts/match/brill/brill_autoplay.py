@@ -1,14 +1,20 @@
 """Have the Brill service play the cards of a replayed contract (its /autoplay with a fixed auction).
 
-    elo/.venv/Scripts/python.exe ben/scripts/match/brill/brill_autoplay.py FIELD.jsonl REPLAY.jsonl OUT.jsonl
+    elo/.venv/Scripts/python.exe ben/scripts/match/brill/brill_autoplay.py FIELD.jsonl REPLAY.jsonl OUT.jsonl [--no-requests]
+
+--no-requests only copies other models' results of the same auctions (below) and
+sends nothing: for a rebuild while another run holds the service.
 
 For each board of REPLAY (brill_replay.py) the Brill robots play all four hands
 in the auction our model reached. Boards that need no request:
   brill-auction   the Brill entrant had the same auction in the event: its result is Brill's play of it
   brill-contract  the Brill entrant played the same contract by the same declarer
   passout         nobody bid
+  copied          another model's autoplay (a file next to OUT) has the same auction:
+                  its line is copied, with copied_from
 Every other board is sent to /autoplay, one request at a time (the service plays
-live events too). OUT.jsonl gets one line per played board and the run can be
+live events too). The events our entrant played itself are played too: the
+replay pages show the model on every event. OUT.jsonl gets one line per played board and the run can be
 started again: boards already in OUT are skipped. Three failures in a row stop it (six when they
 are gateway time-outs: those mark a board the service plays for more than 180 s; a time-out on a
 board that failed before is not counted).
@@ -47,7 +53,8 @@ ENTRANT = 'R:MortyAI'   # our model as a real entrant of the dailies (first even
 
 def entered_events(field):
     """The events our model played itself: it has a table at every board of the event.
-    For these the event's own table is our result, and no replay or autoplay stands in."""
+    For these the event's own table is our result on the main page; the replay pages
+    show the replay there too."""
     boards, ours = {}, {}
     for b in field:
         boards[b['tournament_id']] = boards.get(b['tournament_id'], 0) + 1
@@ -116,21 +123,40 @@ def main():
             else:
                 failed[key] = failed.get(key, 0) + 1
     given_up = {key for key, n in failed.items() if n >= GIVE_UP and key not in {d[:2] for d in done}}
-    entered = entered_events(field.values())
-    todo = []
+    # the same auction already played for another model (another file of OUT's folder) is copied, not sent again
+    elsewhere = {}
+    for other in sorted(out_path.parent.glob('*.jsonl')):
+        if other.resolve() == out_path.resolve():
+            continue
+        for line in other.open(encoding='utf-8'):
+            r = json.loads(line)
+            if 'error' not in r and 'tricks' in r:
+                elsewhere.setdefault((r['tournament_id'], r['board'], tuple(r['auction'])), dict(r, copied_from=other.stem))
+    todo, copied = [], []
     for r in replay:
         key = (r['tournament_id'], r['board'])
         board = field[key]
         if ('error' in r or key + (tuple(r['walk']),) in done or key in given_up or not is_daily(board)
-                or r['tournament_id'] in entered
                 or brill_source(board, r['walk'])[0] != 'autoplay'):
+            continue
+        same = elsewhere.get(key + (tuple(r['walk']),))
+        if same is not None:
+            copied.append(same)
+            done.add(key + (tuple(r['walk']),))
             continue
         at_a_table = any(table_contract(t) == contract_of(r['walk'], board['dealer']) for t in board['tables'])
         todo.append((key in failed, at_a_table, board['date'], r))
     # boards never tried before those that failed once; contracts nobody played first, then the most recent events
     todo.sort(key=lambda item: (item[0], item[1], -int(item[2].replace('-', '')[:8])))
-    print(f'{len(replay)} boards replayed, {len(done)} already played, {len(todo)} to send to {BASE}, '
+    if copied:
+        with out_path.open('a', encoding='utf-8') as out:
+            for r in copied:
+                out.write(json.dumps(r) + '\n')
+    print(f'{len(replay)} boards replayed, {len(done) - len(copied)} already played, {len(copied)} copied from another '
+          f"model's autoplay of the same auction, {len(todo)} to send to {BASE}, "
           f'{len(given_up)} left out after {GIVE_UP} failed attempts', flush=True)
+    if not todo or '--no-requests' in sys.argv[4:]:
+        return
 
     status = get(f'{BASE}/ready')
     if status.get('status') != 'ready':

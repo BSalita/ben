@@ -1,11 +1,15 @@
 """Build the board-by-board page from the table of brill_board_table.py.
 
-    elo/.venv/Scripts/python.exe ben/scripts/match/brill/brill_board_page.py OUT_DIR MODEL_NAME
+    elo/.venv/Scripts/python.exe ben/scripts/match/brill/brill_board_page.py OUT_DIR MODEL_NAME [--dd DD.json]
+        [--views VIEWS.json --view-id ID]
 
-Reads OUT_DIR/boards.parquet, events.csv, standings.csv, lifetime.csv and dd.json; writes OUT_DIR/brill-board-table.html
+Reads OUT_DIR/boards.parquet, events.csv, standings.csv, lifetime.csv, meta.json and dd.json; writes OUT_DIR/brill-board-table.html
 (from brill_board_page.template.html), OUT_DIR/leader-board.html (the same page as a
 whole document, for a web server) and OUT_DIR/groups.csv, and prints the group table.
+VIEWS.json (brill_views.py) lists the pages of the other views, linked at the top
+of the page; ID is this page's ('' for the main one).
 """
+import argparse
 import json
 import pathlib
 import re
@@ -107,10 +111,26 @@ def par_text(text):
 
 
 def main():
-    out_dir, model = pathlib.Path(sys.argv[1]), sys.argv[2]
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('out_dir', type=pathlib.Path)
+    parser.add_argument('model', help='name of the replayed model')
+    parser.add_argument('--dd', type=pathlib.Path, default=None, help='double-dummy cache (default OUT_DIR/dd.json)')
+    parser.add_argument('--views', type=pathlib.Path, default=None)
+    parser.add_argument('--view-id', default='')
+    a = parser.parse_args()
+    views = json.loads(a.views.read_text(encoding='utf-8')) if a.views else []
+    build_page(a.out_dir, a.model, a.dd, views, a.view_id)
+
+
+def build_page(out_dir, model, dd_path=None, views=(), view_id=''):
     boards = pl.read_parquet(out_dir / 'boards.parquet')
     events = pl.read_csv(out_dir / 'events.csv')
-    dd = json.loads((out_dir / 'dd.json').read_text(encoding='utf-8'))
+    dd = json.loads((dd_path or out_dir / 'dd.json').read_text(encoding='utf-8'))
+    meta_path = out_dir / 'meta.json'
+    meta = json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {
+        'view': 'as-played', 'lifetime_min': LIFETIME_MIN_EVENTS, 'events_left_out': 0, 'models': []}
+    if 'model_key' not in boards.columns:
+        boards = boards.with_columns(pl.lit('').alias('model_key'), pl.lit(model).alias('model'), pl.lit(None, pl.String).alias('played_at'))
 
     extra = []
     for b in boards.iter_rows(named=True):
@@ -147,21 +167,30 @@ def main():
         {'value': f"{mp['pct'].mean():.1f}%", 'label': f'average board in {mp_events.height} matchpoint events'},
         {'value': f"{im['imp'].mean():+.2f} IMP", 'label': f'per board in {imp_events.height} IMP events'},
         {'value': f"{events['rank'].median():.0f} of {events['entrants'].median():.0f}", 'label': 'median rank in an event, of the median field'},
-        {'value': f"{(events['rank'] == 1).sum()} wins", 'label': f"and {(events['rank'] <= 3).sum()} top-three finishes in {events.height} events"},
+        {'value': f"{(events['rank'] == 1).sum()} win{'' if (events['rank'] == 1).sum() == 1 else 's'}", 'label': f"and {(events['rank'] <= 3).sum()} top-three finishes in {events.height} events"},
         {'value': f'{same:.0f}%', 'label': 'of boards in the contract most tables reached'},
         {'value': f"{boards['imp_dd_vs_field'].mean():+.2f} IMP", 'label': 'per board from the bidding alone: double-dummy result of our contract against that of most tables'},
     ]
+    # the models behind the rows: an index into `models` on every board and event
+    models = [{'key': m['model_key'], 'name': m['model'], 'events': m['events'], 'boards': m['boards'],
+               'first': m['first'], 'last': m['last']} for m in meta['models']] or [
+        {'key': k, 'name': n, 'events': 0, 'boards': 0, 'first': '', 'last': ''}
+        for k, n in boards.select('model_key', 'model').unique(maintain_order=True).iter_rows()]
+    model_index = {m['key']: k for k, m in enumerate(models)}
+    event_model = {t: model_index[g['model_key'].mode()[0]] for (t,), g in boards.group_by('tournament_id')}
     page_events = [{'id': e['tournament_id'], 'date': e['date'], 'event': e['event'], 'short': e['event'].split(' — ')[0],
                     'scoring': e['scoring'], 'measure': e['measure'], 'rank': e['rank'], 'entrants': e['entrants'],
                     'winner': e['winner'], 'winner_measure': e['winner_measure'], 'pending': e['pending'],
-                    'bid': e['imp_dd_vs_par']} for e in events.sort('date', 'event', descending=True).iter_rows(named=True)]
+                    'bid': e['imp_dd_vs_par'], 'm': event_model[e['tournament_id']]}
+                   for e in events.sort('date', 'event', descending=True).iter_rows(named=True)]
     page_boards = [{'i': b['i'], 't': b['tournament_id'], 'sc': b['scoring'], 'b': b['board'], 'dl': b['dealer'], 'v': b['vul'],
                     'deal': b['deal'], 'a': b['auction'], 'c': b['contract'], 'by': b['declarer'], 'r': b['result'],
                     's': b['score'], 'pct': b['pct'], 'imp': b['imp'], 'ddr': b['dd_result'], 'dds': b['dd_score'],
                     'ddev': b['dd_ev'], 'par': b['par_score'], 'parc': par_text(b['par']), 'parev': b['par_ev'],
                     'parevc': b['par_ev_contract'], 'src': b['result_source'], 'rob': b['robots'], 'fc': b['field_common'],
                     'fcs': b['field_common_share'], 'fm': b['field_median'], 'n': b['tables'], 'bc': b['brill_contract'],
-                    'bs': b['brill_score'], 'bid': b['imp_dd_vs_par'], 'vf': b['imp_dd_vs_field'], 'g': b['group']}
+                    'bs': b['brill_score'], 'bid': b['imp_dd_vs_par'], 'vf': b['imp_dd_vs_field'], 'g': b['group'],
+                    'm': model_index[b['model_key']], 'at': (b['played_at'] or '')[:16].replace('T', ' ')}
                    for b in boards.iter_rows(named=True)]
     # rankings: the top ten of every event and of each scoring's lifetime table, and our row when it is lower
     def top(rows, extra=()):
@@ -175,9 +204,10 @@ def main():
     # the events our model played itself as an entrant: their rows are its real tables, not the replay
     live = boards.filter(pl.col('robots') == 'live')
     entered = {'events': live['tournament_id'].n_unique(), 'boards': live.height, 'first': live['date'].min()} if live.height else None
+    nav = [{'id': v['id'], 'title': v['title'], 'text': v.get('text', ''), 'current': v['id'] == view_id} for v in views]
     data = {'made': f'{datetime.now():%Y-%m-%d %H:%M}', 'model': model, 'first': boards['date'].min(), 'last': boards['date'].max(),
-            'entered': entered,
-            'ranks': ranks, 'lifetime': lifetime, 'lifetime_min': LIFETIME_MIN_EVENTS,
+            'entered': entered, 'view': meta['view'], 'left_out': meta.get('events_left_out', 0), 'models': models, 'views': nav,
+            'ranks': ranks, 'lifetime': lifetime, 'lifetime_min': meta['lifetime_min'],
             'pending': int((boards['result_source'] == 'dd-pending').sum()), 'figures': figures, 'groups': groups,
             'best': best, 'worst': worst, 'events': page_events, 'boards': page_boards}
     template = (HERE / 'brill_board_page.template.html').read_text(encoding='utf-8')

@@ -1,17 +1,27 @@
-# Daily update of one replayed model's Brill board table and leaderboard page.
+# Daily update of the Brill board table and leaderboard pages, and the way to replay
+# another model on the past events.
 #
-#   powershell -File ben\scripts\match\brill\daily_update.ps1 [-Model prodnow] [-Conf /var/lib/ben/brill/conf/prodnow.conf]
-#       [-Name ...] [-Engine checkout|image] [-Workers 8] [-NoPublish] [-SkipRebuild]
+#   powershell -File ben\scripts\match\brill\daily_update.ps1 [-Model KEY] [-Conf /var/lib/ben/.../KEY.conf]
+#       [-Name ...] [-Engine checkout|image] [-MakeDefault] [-SkipEntered] [-Workers 8] [-NoPublish] [-SkipRebuild]
 #
-# Defaults since 2026-11-22: prod's bidding (the self-play 012 network with its three rules; the
-# five-card two-over-one rule added to prodnow.conf when prod took it at 09:10), run from this checkout. The page's model until then: -Model old -Conf /var/lib/ben/ab/conf/old.conf
-# -Name GIB-BBO-8730-base -Engine image
+# With no -Model: the default model of data\brill-replay\models.json (brill_views.py),
+# with its conf, name and engine (since 2026-11-22: prodnow, prod's bidding of that day).
+#
+# Replaying a model on the previous sessions (an option, not the daily task's job):
+#   daily_update.ps1 -Model KEY -Conf /var/lib/ben/<path>.conf -Name "what it is" [-Engine checkout|image] [-MakeDefault]
+# bids every past board the model has not bid yet (all of them for a new KEY; about
+# 2 s a board with 8 workers), registers KEY in models.json, plays the new contracts on
+# Brill's autoplay (copying any other model's autoplay of the same auction) and
+# rebuilds every page: KEY gets its own replay page, and the saved results of the
+# models replayed before stay on theirs. -MakeDefault also makes KEY the model the main
+# page shows before Morty AI entered and the one the daily task replays from then on.
 #
 # Brill's events close at 06:00; run this after that. Steps:
 #   1. fetch the events that closed since the last run (fetch_brill_field.py adds only new ones)
 #   2. have the model bid the new boards as South (brill_replay.py --resume, in a
 #      temporary container of the BEN image, with this folder's scripts mounted).
-#      Events Morty AI played itself are not bid: their own table is the result.
+#      Events Morty AI played itself are bid too (its replay page covers every event;
+#      the main page uses its own table there); -SkipEntered leaves them out.
 #      -Engine image runs the image's BEN code; -Engine checkout (default) mounts
 #      this BEN checkout at /ben (and the auction model's code and runs at /code
 #      and /data, as the self-play farm container does), for settings that need
@@ -24,14 +34,16 @@
 # Each run writes data\brill-replay\daily\<date_time>.log and one line in
 # data\brill-replay\daily\history.log. Exit code 1 when a step failed.
 param(
-    [string]$Model = "prodnow",
-    [string]$Conf = "/var/lib/ben/brill/conf/prodnow.conf",
-    [string]$Name = "self-play 012 bidding with the jump, 2NT-to-3NT and five-card two-over-one rules (prod 2026-11-22)",
+    [string]$Model = "",
+    [string]$Conf = "",
+    [string]$Name = "",
     [string]$Image = "ben:latest",
-    [ValidateSet("image", "checkout")]
-    [string]$Engine = "checkout",
+    [ValidateSet("", "image", "checkout")]
+    [string]$Engine = "",
     [string]$AuctionModelData = "E:\bridge\data\auction-model",
     [int]$Workers = 8,
+    [switch]$MakeDefault,
+    [switch]$SkipEntered,
     [switch]$NoPublish,
     [switch]$SkipRebuild
 )
@@ -41,6 +53,19 @@ $python = Join-Path $src "elo\.venv\Scripts\python.exe"
 $scripts = $PSScriptRoot
 $data = Join-Path $src "data\brill-replay"
 $daily = Join-Path $data "daily"
+
+# The model: -Model, else the default of models.json; what is not given comes from its entry there.
+$registryPath = Join-Path $data "models.json"
+$registry = if (Test-Path -LiteralPath $registryPath) { Get-Content -LiteralPath $registryPath -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+if (-not $Model) {
+    if (-not $registry -or -not $registry.default) { throw "no -Model given and ${registryPath} names no default model" }
+    $Model = $registry.default
+}
+$entry = if ($registry -and $registry.models.PSObject.Properties[$Model]) { $registry.models.$Model } else { $null }
+if (-not $Conf) { $Conf = if ($entry) { $entry.conf } else { "" } }
+if (-not $Name) { $Name = if ($entry) { $entry.name } else { $Model } }
+if (-not $Engine) { $Engine = if ($entry -and $entry.engine) { $entry.engine } else { "checkout" } }
+if (-not $Conf) { throw "model $Model is not in ${registryPath}: give -Conf (and -Name, -Engine)" }
 $container = "ben-brill-daily"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUNBUFFERED = "1"
@@ -86,19 +111,20 @@ except FileNotFoundError:
     pass
 print(sum(1 for line in open(field, encoding='utf-8') for b in [json.loads(line)] if (b['tournament_id'], b['board']) not in done))
 '@
-# the boards to bid: those of the field file outside the events Morty AI played itself
+# the boards to bid: those of the field file; with "skip", not those of the events Morty AI played itself
 $boardsToBid = @'
 import json, sys
-scripts, field, target = sys.argv[1:4]
+scripts, field, target, skip = sys.argv[1:5]
 sys.path.insert(0, scripts)
 from brill_autoplay import entered_events
 boards = [json.loads(line) for line in open(field, encoding='utf-8')]
-entered = entered_events(boards)
+entered = entered_events(boards) if skip == 'skip' else set()
 with open(target, 'w', encoding='utf-8', newline='\n') as f:
     for b in boards:
         if b['tournament_id'] not in entered:
             f.write(json.dumps(b) + '\n')
-print(f"{len(entered)} events played by Morty AI itself are not bid")
+if entered:
+    print(f"{len(entered)} events played by Morty AI itself are not bid")
 '@
 # the replay file with one line per board: the last good one, else the last error
 $tidyReplay = @'
@@ -120,12 +146,16 @@ print(f"{len(rows)} boards in {target}, {sum(1 for r in rows.values() if 'error'
 $result = "ok"
 $newBoards = 0
 try {
-    Say "start: model $Model"
+    Say "start: model $Model ($Name), conf $Conf, engine $Engine"
+    $register = @("$scripts\brill_views.py", $data, "register", $Model, "--name", $Name, "--conf", $Conf, "--engine", $Engine)
+    if ($MakeDefault) { $register += "--default" }
+    & $python @register | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "registering model $Model failed with exit code $LASTEXITCODE" }
     $field = Join-Path $data "field.jsonl"
     $replay = Join-Path $data "runs\$Model.jsonl"
     Run-Python "fetch new events" @("$scripts\fetch_brill_field.py", $field)
     $toBid = Join-Path $daily "field-to-bid.jsonl"
-    $boardsToBid | & $python - $scripts $field $toBid
+    $boardsToBid | & $python - $scripts $field $toBid $(if ($SkipEntered) { "skip" } else { "all" })
     if ($LASTEXITCODE -ne 0) { throw "listing the boards to bid failed with exit code $LASTEXITCODE" }
 
     $newBoards = [int]($countMissing | & $python - $toBid $replay)

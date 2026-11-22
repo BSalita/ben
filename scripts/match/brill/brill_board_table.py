@@ -1,16 +1,24 @@
-"""Board-by-board table of a replayed model in the Brill daily events.
+"""Board-by-board table of our model in the Brill daily events.
 
     elo/.venv/Scripts/python.exe ben/scripts/match/brill/brill_board_table.py FIELD.jsonl REPLAY.jsonl AUTOPLAY.jsonl SD.json OUT_DIR
+        [--view as-played|real|replay] [--model KEY] [--model-name NAME] [--prod-models CSV] [--dd DD.json]
 
-Our model bids South (brill_replay.py). The result of its contract is Brill's
+In a replay our model bids South (brill_replay.py). The result of its contract is Brill's
 own card play: the Brill entrant's table when it had our auction or played our
 contract, else the Brill service's /autoplay of our auction (brill_autoplay.py).
 A board whose autoplay is not in AUTOPLAY.jsonl yet gets the double dummy result
 and result_source 'dd-pending'.
 
-Since 2026-11-19 the model is an entrant of the dailies itself (R:MortyAI). In an
-event it played, its own table is the row (result_source 'played', robots 'live')
-and the replay is not used; its table is never also counted as one of the field.
+Since 2026-11-19 the model is an entrant of the dailies itself (R:MortyAI). Views:
+  as-played  (default) in an event it played, its own table is the row (result_source
+             'played', robots 'live') and the replay is not used; every other event is the replay
+  real       only the events it played, its own tables
+  replay     the replay on every event, also those it played; an event with a board
+             the replay lacks is left out
+Its real table is never also counted as one of the field. Each row names the model
+behind it: for a real table the prod setting of the time it was played (PROD_MODELS,
+data/brill-replay/prod-models.csv: since_utc,key,label), for a replay --model and
+--model-name. OUT_DIR/meta.json describes the view for the page.
 
 DD_EV and Par_EV are the single-dummy expected values of mlBridgeAugmentLib
 (EV_Score and EV_Max), from the trick probabilities of brill_sd_probs.py:
@@ -24,6 +32,9 @@ the event's own table once the model had entered) in the field. standings.csv ha
 boards (our model, named Morty AI, is player_id OURS); lifetime.csv has each entrant's average
 board over its events of one scoring, ranked among those with 20 or more events.
 """
+import argparse
+import bisect
+import csv
 import json
 import pathlib
 import re
@@ -44,6 +55,26 @@ STRAINS = 'CDHSN'
 US = 'OURS'
 OUR_NAME = 'Morty AI'   # the name of our entrant in the standings and on the page
 LIFETIME_MIN_EVENTS = 20   # events of one scoring an entrant must have completed to be ranked in lifetime.csv
+VIEWS = ('as-played', 'real', 'replay')
+
+
+class ProdModels:
+    """Which of our models prod served at a time: rows (since_utc, key, label) of prod-models.csv."""
+
+    def __init__(self, path):
+        self.rows = []
+        if path and pathlib.Path(path).exists():
+            with open(path, encoding='utf-8', newline='') as f:
+                self.rows = sorted((r['since_utc'], r['key'], r['label']) for r in csv.DictReader(f))
+        self.since = [r[0] for r in self.rows]
+
+    def at(self, played_at):
+        """(key, label) of the setting live at played_at ('2026-11-21T17:19:51.9+00:00'), or 'unknown'."""
+        if not played_at:
+            return 'unknown', 'not known (no play time)'
+        stamp = played_at[:19] + 'Z'    # the CSV writes 2026-11-21T16:44:00Z; Brill +00:00
+        k = bisect.bisect_right(self.since, stamp) - 1
+        return (self.rows[k][1], self.rows[k][2]) if k >= 0 else ('unknown', 'before the first known prod setting')
 
 
 def dd_and_par(field, cache_path):
@@ -112,38 +143,79 @@ def cross(mine, others, scoring):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('field', type=pathlib.Path)
+    parser.add_argument('replay', help="the model's replay (brill_replay.py); '-' for none (view real)")
+    parser.add_argument('autoplay', help="Brill's autoplay of the replay's contracts; '-' for none")
+    parser.add_argument('sd', type=pathlib.Path)
+    parser.add_argument('out_dir', type=pathlib.Path)
+    parser.add_argument('--view', choices=VIEWS, default='as-played')
+    parser.add_argument('--model', default='', help='key of the replayed model (runs/KEY.jsonl)')
+    parser.add_argument('--model-name', default='', help='its name on the page')
+    parser.add_argument('--prod-models', type=pathlib.Path, default=None,
+                        help='prod-models.csv (default: next to FIELD)')
+    parser.add_argument('--dd', type=pathlib.Path, default=None, help='double-dummy cache (default OUT_DIR/dd.json)')
+    a = parser.parse_args()
+    build(a.field, None if a.replay == '-' else pathlib.Path(a.replay), None if a.autoplay == '-' else pathlib.Path(a.autoplay),
+          a.sd, a.out_dir, a.view, a.model, a.model_name,
+          a.prod_models or a.field.with_name('prod-models.csv'), a.dd)
+
+
+def build(field_path, replay_path, autoplay_path, sd_path, out_dir, view='as-played', model_key='', model_name='',
+          prod_models_path=None, dd_path=None):
     started = datetime.now()
-    print(f'start {started:%Y-%m-%d %H:%M:%S}')
-    field_path, replay_path, autoplay_path, sd_path, out_dir = (pathlib.Path(p) for p in sys.argv[1:6])
+    print(f'start {started:%Y-%m-%d %H:%M:%S}  view {view}  model {model_key or "-"}')
     out_dir.mkdir(parents=True, exist_ok=True)
     every = [json.loads(line) for line in field_path.open(encoding='utf-8')]
     field = [b for b in every if is_daily(b)]
     left_out = sorted({b['event'] for b in every if not is_daily(b)})
     print(f'{len(field)} boards of daily events; left out as not a daily: {len(every) - len(field)} boards of {left_out}')
-    replay ={(r['tournament_id'], r['board']): r for r in map(json.loads, replay_path.open(encoding='utf-8'))}
+    replay = {}
+    if replay_path is not None:
+        replay = {(r['tournament_id'], r['board']): r for r in map(json.loads, replay_path.open(encoding='utf-8'))}
     played = {}
-    if autoplay_path.exists():
+    if autoplay_path is not None and autoplay_path.exists():
         for line in autoplay_path.open(encoding='utf-8'):
             r = json.loads(line)
             if 'error' not in r:
                 played[(r['tournament_id'], r['board'])] = r
-    dd = dd_and_par(field, out_dir / 'dd.json')
-    sd_all = json.loads(sd_path.read_text(encoding='utf-8'))['deals']
+    prod = ProdModels(prod_models_path)
 
     # Since 2026-11-19 our model is an entrant itself (ENTRANT). In an event it played, its own
-    # table is our result; in every other event the replay is. Its table never also counts as
-    # one of the field, so each event and the lifetime table hold one row for it.
+    # table is our result in the views as-played and real; in every other event the replay is.
+    # Its table never also counts as one of the field, so each event and the lifetime table hold one row for it.
     entered = entered_events(field)
-    print(f'{len(entered)} events played by {ENTRANT} itself: their tables are used, not the replay')
+    print(f'{len(entered)} events played by {ENTRANT} itself')
+    no_replay = {b['tournament_id'] for b in field
+                 if 'error' in replay.get((b['tournament_id'], b['board']), {'error': 'missing'})}
+    dropped = set()
+    if view == 'real':
+        dropped = {b['tournament_id'] for b in field} - entered
+    elif view == 'replay':
+        dropped = no_replay
+        if dropped:
+            print(f'{len(dropped)} events left out: the replay lacks some of their boards')
+    field = [b for b in field if b['tournament_id'] not in dropped]
+    if not field:
+        raise SystemExit(f'view {view}: no event to show')
+    dd = dd_and_par(field, dd_path or out_dir / 'dd.json')
+    sd_all = json.loads(sd_path.read_text(encoding='utf-8'))['deals']
 
     rows, standings = [], []
     for b in field:
         key = (b['tournament_id'], b['board'])
-        own = next((t for t in b['tables'] if t['player_id'] == ENTRANT), None) if b['tournament_id'] in entered else None
+        own = None
+        if view != 'replay' and b['tournament_id'] in entered:
+            own = next(t for t in b['tables'] if t['player_id'] == ENTRANT)
         b = dict(b, tables=[t for t in b['tables'] if t['player_id'] != ENTRANT])
         r = replay.get(key)
         if own is None and (r is None or 'error' in r):
             raise SystemExit(f'board {key} has no replay')
+        if own is None:
+            row_model, played_at = (model_key, model_name), None
+        else:
+            played_at = own.get('played_at')
+            row_model = prod.at(played_at)
         info = dd[f"{b['deal']}|{b['dealer']}|{b['vul']}"]
         walk = r['walk'] if own is None else own['auction']
         contract = contract_of(walk, b['dealer'])
@@ -199,6 +271,7 @@ def main():
             'field_common_share': round(contracts.count(common) / len(contracts) * 100),
             'brill_contract': None if brill is None else (brill['contract'] + ' ' + brill['declarer'] if brill['declarer'] else 'Pass'),
             'brill_score': None if brill is None else brill['ns_score'],
+            'model_key': row_model[0], 'model': row_model[1], 'played_at': played_at,
         })
         # every entrant's result on this board with our table (the event's own, or the replay) in the field
         entries = [(t['player_id'], t['name'], t['ns_score']) for t in b['tables']] + [(US, OUR_NAME, score)]
@@ -221,7 +294,10 @@ def main():
     full = totals.join(event_info, on='tournament_id').sort('date', 'event', 'rank', 'name')
     (full.select('date', 'event', 'tournament_id', 'scoring', 'rank', 'entrants', 'player_id', 'name',
                  pl.col('measure').round(2), 'boards').write_csv(out_dir / 'standings.csv'))
-    qualifies = pl.col('events') >= LIFETIME_MIN_EVENTS
+    # a view of few events (real) ranks those with half its events of the scoring, at most 20
+    per_scoring = event_info.group_by('scoring').len()
+    lifetime_min = max(2, min(LIFETIME_MIN_EVENTS, int(per_scoring['len'].min()) // 2))
+    qualifies = pl.col('events') >= lifetime_min
     lifetime = (full.group_by('scoring', 'player_id')
                 .agg(pl.col('name').last(), pl.len().alias('events'), pl.col('boards').sum(),
                      (pl.col('measure') * pl.col('boards')).sum().alias('total'),
@@ -252,8 +328,19 @@ def main():
     (out_dir / 'table.json').write_text(json.dumps({
         'made': f'{datetime.now():%Y-%m-%d %H:%M}',
         'events': events.to_dicts(), 'boards': boards.to_dicts()}), encoding='utf-8')
+    models = (boards.group_by('model_key', 'model').agg(pl.len().alias('boards'), pl.col('tournament_id').n_unique().alias('events'),
+                                                         pl.col('date').min().alias('first'), pl.col('date').max().alias('last'),
+                                                         pl.col('played_at').min().alias('first_played'))
+              .sort('first', 'first_played', 'model_key', nulls_last=False).drop('first_played'))
+    (out_dir / 'meta.json').write_text(json.dumps({
+        'view': view, 'model_key': model_key, 'model_name': model_name, 'lifetime_min': lifetime_min,
+        'events_left_out': len(dropped) if view == 'replay' else 0,
+        'entered_events': len(entered & {b['tournament_id'] for b in field}),
+        'models': models.to_dicts()}, indent=1), encoding='utf-8')
     counts = boards.group_by('result_source').len().sort('len', descending=True)
     print(counts)
+    with pl.Config(tbl_width_chars=200, fmt_str_lengths=90):
+        print(models)
     ended = datetime.now()
     print(f'end {ended:%Y-%m-%d %H:%M:%S}  elapsed {ended - started}  {boards.height} boards, {events.height} events -> {out_dir}')
 

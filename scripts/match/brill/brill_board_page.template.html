@@ -88,6 +88,12 @@ tr.below > td { border-top: 2px solid var(--line); }
 .more { align-self: start; font: inherit; padding: 7px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
 .defs { color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
 .defs b { color: var(--fg); font-weight: 600; }
+.views { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.views a { font-size: 14px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); text-decoration: none; }
+.views a:hover { background: var(--accent-soft); }
+.views a[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.viewtext { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.mk { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 [hidden] { display: none !important; }
 </style>
 
@@ -95,9 +101,16 @@ tr.below > td { border-top: 2px solid var(--line); }
   <header>
     <h1>Morty's Unofficial Brill Leaderboard</h1>
     <p class="lede" id="lede"></p>
+    <nav class="views" id="views" aria-label="Results to show" hidden></nav>
+    <p class="viewtext" id="viewtext" hidden></p>
   </header>
   <p class="note" id="pending" hidden></p>
   <section class="figures" id="figures"></section>
+  <section>
+    <h2>Models behind these results</h2>
+    <p class="lede" id="models-lede" style="margin:0 0 12px"></p>
+    <div class="scroll"><table id="models"></table></div>
+  </section>
   <section>
     <h2>Lifetime top ten</h2>
     <p class="lede" id="lifetime-lede" style="margin:0 0 12px"></p>
@@ -105,7 +118,7 @@ tr.below > td { border-top: 2px solid var(--line); }
   </section>
   <section>
     <h2>Top ten of each event, day by day</h2>
-    <p class="lede" style="margin:0 0 12px">The standings of each event of one day. Morty AI's row is its own table in the events it entered and, before that, its replay added to every board's field. Entrants who played all the event's boards are ranked. Morty AI is the shaded row; when it is outside the top ten it is added below with its rank.</p>
+    <p class="lede" style="margin:0 0 12px"><span id="day-lede">The standings of each event of one day. Morty AI's row is its own table in the events it entered and, before that, its replay added to every board's field.</span> Entrants who played all the event's boards are ranked. Morty AI is the shaded row; when it is outside the top ten it is added below with its rank.</p>
     <div class="controls">
       <button class="btn" id="day-prev">◂ Earlier day</button>
       <label>Day<select id="day"></select></label>
@@ -142,7 +155,8 @@ tr.below > td { border-top: 2px solid var(--line); }
   </section>
   <section class="defs">
     <h2 style="color:var(--fg)">Columns</h2>
-    <div><b>Contract, By, Result, Score</b> In the events Morty AI entered, its table in the event. Before that, a replay: Morty AI bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.</div>
+    <div id="col-contract"><b>Contract, By, Result, Score</b> In the events Morty AI entered, its table in the event. Before that, a replay: Morty AI bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.</div>
+    <div><b>Model</b> The bidding model behind the row: for Morty AI's own table, the setting prod served when the board was played (Brill records the time); for a replay, the replayed model. The full names are in the table of models.</div>
     <div><b>Pct / IMP</b> Our score against every real table of the board: matchpoint percentage in MP events, average cross-IMPs in IMP events.</div>
     <div><b>DD</b> The double-dummy result of our contract and its North-South score.</div>
     <div><b>DD_EV</b> The expected North-South score of our contract when the two hands of the non-declaring side are dealt at random (40 deals, each solved double dummy).</div>
@@ -169,9 +183,38 @@ const eventOf = Object.fromEntries(D.events.map(e => [e.id, e]));
 const boardsOf = {};
 D.boards.forEach(b => (boardsOf[b.t] = boardsOf[b.t] || []).push(b));
 
-$('lede').textContent = `Morty AI seated South in ${D.events.length} closed Brill daily events, ${D.boards.length} boards, ${D.first} to ${D.last}. ` +
-  (D.entered ? `Since ${D.entered.first} Morty AI is an entrant of the dailies (listed there as MortyAI): its ${D.entered.events} events since then, ${D.entered.boards} boards, are its real tables. The earlier events are a replay of bidding model ${D.model} against the calls the Brill robots made. ` : `A replay of bidding model ${D.model} against the calls the Brill robots made. `) +
+const VIEW = D.view || 'as-played';
+const M = D.models || [];
+const mk = i => M[i] ? `<span class="mk" title="${esc(M[i].name)}">${esc(M[i].key)}</span>` : '';
+const span = `${D.events.length} closed Brill daily events, ${D.boards.length} boards, ${D.first} to ${D.last}`;
+$('lede').textContent = (VIEW === 'real'
+  ? `Morty AI's own tables in the ${D.events.length} closed Brill daily events it entered (listed there as MortyAI), ${D.boards.length} boards, ${D.first} to ${D.last}. Each board was bid and played by the setting prod served at the time; the table of models below names them. `
+  : VIEW === 'replay'
+  ? `A replay of bidding model ${D.model} seated South in ${span}: North, East and West make the calls the Brill robots made and Brill's robots play the cards. It covers the events Morty AI entered too, where its own table is left out of the field. ` +
+    (D.left_out ? `${D.left_out} events are not shown: the model has not bid all their boards yet. ` : '')
+  : `Morty AI seated South in ${span}. ` +
+    (D.entered ? `Since ${D.entered.first} Morty AI is an entrant of the dailies (listed there as MortyAI): its ${D.entered.events} events since then, ${D.entered.boards} boards, are its real tables. The earlier events are a replay of bidding model ${D.model} against the calls the Brill robots made. ` : `A replay of bidding model ${D.model} against the calls the Brill robots made. `)) +
   `Made ${D.made}.`;
+if ((D.views || []).length > 1) {
+  $('views').hidden = false;
+  $('views').innerHTML = D.views.map(v => `<a href="/daily-leaderboard${v.id ? '/' + v.id : ''}"${v.current ? ' aria-current="page"' : ''} title="${esc(v.text)}">${esc(v.title)}</a>`).join('');
+  const cur = D.views.find(v => v.current);
+  if (cur && cur.text) { $('viewtext').hidden = false; $('viewtext').textContent = cur.text; }
+}
+if (VIEW === 'real') {
+  $('day-lede').textContent = "The standings of each event of one day, with Morty AI's own table.";
+  $('col-contract').innerHTML = "<b>Contract, By, Result, Score</b> Morty AI's table in the event: it bid South and played the cards with three Brill robots. Score is North-South's.";
+} else if (VIEW === 'replay') {
+  $('day-lede').textContent = "The standings of each event of one day, with the replay added to every board's field in Morty AI's place.";
+  $('col-contract').innerHTML = "<b>Contract, By, Result, Score</b> The replay: the model bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.";
+}
+$('models-lede').textContent = VIEW === 'replay'
+  ? 'Every row of this view is the one replayed model.'
+  : VIEW === 'real'
+  ? "The setting prod served behind each of Morty AI's tables, by the play time Brill records for the board."
+  : 'The bidding model behind each row. A replayed model is the same on every board; for Morty AI\'s own tables it is the setting prod served when the board was played, by the play time Brill records. Other views (links at the top) show the saved results of each replayed model on every event.';
+$('models').innerHTML = `<tr><th>Model</th><th>Name</th><th class="n">Events</th><th class="n">Boards</th><th>From</th><th>To</th></tr>` +
+  M.map(m => `<tr><td class="mono">${esc(m.key || '—')}</td><td class="wrapcell">${esc(m.name)}</td><td class="n">${m.events}</td><td class="n">${m.boards}</td><td>${m.first}</td><td>${m.last}</td></tr>`).join('');
 if (D.pending) { $('pending').hidden = false; $('pending').textContent = `${D.pending} of ${D.boards.length} boards still wait for Brill's autoplay and show the double-dummy result of our contract instead. They are marked in the last column and the page is rebuilt as results arrive.`; }
 $('figures').innerHTML = D.figures.map(f => `<div class="figure"><b>${esc(f.value)}</b><span>${esc(f.label)}</span></div>`).join('');
 
@@ -192,7 +235,7 @@ function rankChart(rows, scoring, life) {
       `<td class="n">${fmt(r[2])}</td>${life ? `<td class="n">${r[4]}</td><td class="n">${r[5]}</td><td class="n">${r[6]}</td>` : ''}</tr>`;
   }).join('');
 }
-$('lifetime-lede').textContent = `Each entrant's average board over the events it completed. Morty AI's average joins its replay of the events before it entered with its own tables since. Ranked are the entrants with at least ${D.lifetime_min} events of that scoring. They did not all play the same events: Morty AI is seated in every one, the others in those they entered.`;
+$('lifetime-lede').textContent = `Each entrant's average board over the events it completed. ${VIEW === 'real' ? "Morty AI's average is over its own tables." : VIEW === 'replay' ? "Morty AI's average is the replay's." : "Morty AI's average joins its replay of the events before it entered with its own tables since."} Ranked are the entrants with at least ${D.lifetime_min} events of that scoring. They did not all play the same events: Morty AI is seated in every one, the others in those they entered.`;
 $('lifetime').innerHTML = ['MP', 'IMP'].filter(sc => D.lifetime[sc]).map(sc => { const n = D.events.filter(e => e.scoring === sc).length;
   return `<div><h3>${sc === 'MP' ? 'Matchpoint events' : 'IMP events'}<span class="sub">${n} events, ${D.lifetime[sc].ranked} ranked entrants</span></h3><div class="scroll"><table class="rank">${rankChart(D.lifetime[sc].rows, sc, true)}</table></div></div>`; }).join('');
 
@@ -214,13 +257,13 @@ const shortHead = `<tr><th>Date</th><th>Event · board</th><th>Our contract</th>
 $('best').innerHTML = shortHead + D.best.map(i => shortRow(D.boards[i])).join('');
 $('worst').innerHTML = shortHead + D.worst.map(i => shortRow(D.boards[i])).join('');
 
-const BOARD_HEAD = `<th>Bd</th><th>Dlr / Vul</th><th>Contract</th><th>By</th><th>Result</th><th class="n">Score</th><th class="n">Pct / IMP</th><th>DD</th><th class="n">DD_EV</th><th>Par</th><th>Par_EV</th><th>Result from</th>`;
+const BOARD_HEAD = `<th>Bd</th><th>Dlr / Vul</th><th>Contract</th><th>By</th><th>Result</th><th class="n">Score</th><th class="n">Pct / IMP</th><th>DD</th><th class="n">DD_EV</th><th>Par</th><th>Par_EV</th><th>Result from</th><th>Model</th>`;
 function boardRow(b, withEvent) {
   const e = eventOf[b.t];
   const lead = withEvent ? `<td>${e.date}</td><td>${esc(e.short)}</td>` : '';
   return `<tr class="board" tabindex="0" data-i="${b.i}">${lead}<td class="n">${b.b}</td><td>${b.dl} / ${b.v}</td><td>${contract(b.c)}</td><td>${b.by || ''}</td><td>${b.r || ''}</td><td class="n">${signed(b.s)}</td><td class="n ${tone(b)}">${measure(b)}</td>` +
     `<td>${b.ddr == null ? '' : b.ddr + ' · '}${signed(b.dds)}</td><td class="n">${signed(b.ddev)}</td><td>${signed(b.par)} · ${parText(b.parc)}</td><td>${signed(b.parev)} · ${contract(b.parevc.split(' ')[0])} ${b.parevc.split(' ')[1] || ''}</td>` +
-    `<td>${SRC[b.src]}${b.rob === 'simulated' ? '<span class="tag" title="South left every recorded auction; a model of the Brill robots bid the other seats from there">robots simulated</span>' : ''}</td></tr>`;
+    `<td>${SRC[b.src]}${b.rob === 'simulated' ? '<span class="tag" title="South left every recorded auction; a model of the Brill robots bid the other seats from there">robots simulated</span>' : ''}</td><td>${mk(b.m)}</td></tr>`;
 }
 function hand(h) { const s = h.split('.'); return ['S','H','D','C'].map((l, k) => `${suit(l)} ${esc(s[k] || '—')}`).join('<br>'); }
 function detail(b, span) {
@@ -233,7 +276,8 @@ function detail(b, span) {
     <dt>Brill entrant</dt><dd>${b.bc ? esc(b.bc) + ', ' + signed(b.bs) : 'not at this board'}</dd>
     <dt>Against the field</dt><dd>${b.pct.toFixed(1)}% and ${signed(b.imp, 2)} IMPs</dd>
     <dt>Bidding alone</dt><dd>${signed(b.vf)} IMPs against most tables' contract, ${signed(b.bid)} against par (both double dummy)</dd>
-    <dt>Group</dt><dd>${esc(b.g)}</dd></dl></div></td></tr>`;
+    <dt>Group</dt><dd>${esc(b.g)}</dd>
+    <dt>Bid by</dt><dd>${M[b.m] ? esc(M[b.m].name) + (M[b.m].key ? ` (${esc(M[b.m].key)})` : '') : ''}${b.at ? `, played ${b.at} UTC` : ''}</dd></dl></div></td></tr>`;
 }
 
 let view = 'events', shown = 200;
@@ -248,10 +292,10 @@ function render() {
     const g = $('f-group').value;
     const events = D.events.filter(e => boardsOf[e.id].some(b => passes(b, e)));
     $('count').textContent = `${events.length} events${g ? ' with a board in this group' : ''}. Select an event for its boards, a board for its deal and auction.`;
-    main.innerHTML = `<tr><th>Date</th><th>Event</th><th>Scoring</th><th class="n">Our result</th><th class="n">Rank</th><th>Winner</th><th class="n">Bidding IMPs vs par</th></tr>` +
+    main.innerHTML = `<tr><th>Date</th><th>Event</th><th>Scoring</th><th class="n">Our result</th><th class="n">Rank</th><th>Winner</th><th class="n">Bidding IMPs vs par</th><th>Model</th></tr>` +
       events.map(e => `<tr class="event" tabindex="0" data-e="${e.id}"><td>${e.date}</td><td>${esc(e.short)}${e.pending ? `<span class="tag pending">${e.pending} pending</span>` : ''}</td><td>${e.scoring}</td>` +
         `<td class="n">${e.scoring === 'MP' ? e.measure.toFixed(1) + '%' : signed(e.measure, 2)}</td><td class="n ${e.rank <= 3 ? 'good' : e.rank > e.entrants * 0.75 ? 'bad' : ''}">${e.rank} of ${e.entrants}</td>` +
-        `<td>${esc(e.winner)} ${e.scoring === 'MP' ? e.winner_measure.toFixed(1) + '%' : signed(e.winner_measure, 2)}</td><td class="n">${signed(e.bid, 2)}</td></tr>`).join('');
+        `<td>${esc(e.winner)} ${e.scoring === 'MP' ? e.winner_measure.toFixed(1) + '%' : signed(e.winner_measure, 2)}</td><td class="n">${signed(e.bid, 2)}</td><td>${mk(e.m)}</td></tr>`).join('');
     $('more').hidden = true;
   } else {
     let rows = D.boards.filter(b => passes(b, eventOf[b.t]));
@@ -267,7 +311,7 @@ function toggle(row) {
     if (row.classList.toggle('open')) {
       const e = eventOf[row.dataset.e];
       const g = $('f-group').value;
-      const inner = `<tr class="inner"><td colspan="7"><div class="scroll" style="max-width:520px;margin:10px 10px 10px 0"><table class="rank">${rankChart(D.ranks[e.id], e.scoring)}</table></div><div style="overflow-x:auto"><table><tr>${BOARD_HEAD}</tr>${boardsOf[e.id].map(b => boardRow(b, false).replace('class="board"', `class="board${g && b.g === g ? ' hit' : ''}"`)).join('')}</table></div></td></tr>`;
+      const inner = `<tr class="inner"><td colspan="8"><div class="scroll" style="max-width:520px;margin:10px 10px 10px 0"><table class="rank">${rankChart(D.ranks[e.id], e.scoring)}</table></div><div style="overflow-x:auto"><table><tr>${BOARD_HEAD}</tr>${boardsOf[e.id].map(b => boardRow(b, false).replace('class="board"', `class="board${g && b.g === g ? ' hit' : ''}"`)).join('')}</table></div></td></tr>`;
       row.insertAdjacentHTML('afterend', inner);
     } else row.nextElementSibling.remove();
   } else if (row.classList.contains('board')) {
