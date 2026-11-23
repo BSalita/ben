@@ -265,6 +265,14 @@ class BotBid:
             print(f"book_opening: Pass becomes {call} (rule {rule})")
         return call
 
+    def system_rules_apply(self):
+        """[sampling] rules_system = <name in config/systems.conf>: the rules after the search (six_card_jump_to_two,
+        five_card_two_over_one, drury_to_raise, second_call_2nt_to_3nt, weak_two_diamonds_major) were measured in one
+        system, and some assume a game-forcing two over one; with this set they change only the calls of requests
+        that play that system or name none (the server's own bidder). Empty = every request."""
+        only = getattr(self.sampler, 'rules_system', '')
+        return not only or getattr(self.models, 'our_system', None) in (None, only.upper())
+
     def six_card_jump_to_two(self, auction, chosen):
         """[sampling] six_card_jump_to_two = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
         the jump to three of a lower-ranking suit becomes two of it (game forcing in 2/1) when this hand holds
@@ -1055,12 +1063,13 @@ class BotBid:
             if self.verbose:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
 
-        rule_bid = (self.book_opening(auction, candidates[0].bid)
-                    or self.six_card_jump_to_two(auction, candidates[0].bid)
-                    or self.five_card_two_over_one(auction, candidates[0].bid)
-                    or self.drury_to_raise(auction, candidates[0].bid)
-                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid)
-                    or self.weak_two_diamonds_major(auction, candidates[0].bid))
+        rule_bid = self.book_opening(auction, candidates[0].bid)
+        if not rule_bid and self.system_rules_apply():
+            rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
+                        or self.five_card_two_over_one(auction, candidates[0].bid)
+                        or self.drury_to_raise(auction, candidates[0].bid)
+                        or self.second_call_2nt_to_3nt(auction, candidates[0].bid)
+                        or self.weak_two_diamonds_major(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
             who = "Rule"
