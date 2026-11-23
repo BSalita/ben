@@ -201,6 +201,12 @@ class Sample:
         # book_turns_tables = silent,openings: only those tables of the book answer (empty = every table)
         tables = conf.get('sampling', 'book_turns_tables', fallback='').strip()
         sample.book_turns_tables = {x.strip() for x in tables.split(',') if x.strip()} or None
+        # book_filter = <folder of a morty-book edition's chapters>, book_filter_trust = <its trust table>: the
+        # book (C++, fastbook) drops drawn deals whose earlier calls a trusted row would not make (empty = off)
+        sample.book_filter = conf.get('sampling', 'book_filter', fallback='').strip()
+        sample.book_filter_trust = conf.get('sampling', 'book_filter_trust', fallback='').strip()
+        sample.book_filter_field = conf.get('sampling', 'book_filter_field', fallback='sharp_low').strip()
+        sample.book_filter_p = conf.getfloat('sampling', 'book_filter_p', fallback=0.99)
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()
@@ -641,6 +647,50 @@ class Sample:
         return lho_pard_rho, min_scores_lho, min_scores_partner, min_scores_rho
 
         
+    _fastbooks = {}
+
+    def book_filter_deals(self, lho_pard_rho, auction, nesw_i, vuln, models):
+        """[sampling] book_filter = <chapters folder of a morty-book edition>, book_filter_trust = <its trust table>:
+        before the networks check the drawn deals, the morty-book (its C++ form, fastbook) bids every earlier call
+        of the other three players on each deal and drops the deal when a trusted row and margin
+        (book_filter_field >= book_filter_p; default sharp_low 0.99) names another call than the one made."""
+        key = (self.book_filter, self.book_filter_trust, self.book_filter_field, self.book_filter_p)
+        fb = Sample._fastbooks.get(key)
+        if fb is None:
+            import json
+            code = os.path.abspath(self.book_filter)
+            while code != os.path.dirname(code) and not os.path.exists(os.path.join(code, 'fastbook', 'fastbook.py')):
+                code = os.path.dirname(code)
+            for p in (code, os.path.join(code, 'fastbook')):
+                if p not in sys.path:
+                    sys.path.append(p)
+            import fastbook
+            fb = fastbook.FastBook(self.book_filter)
+            with open(self.book_filter_trust) as f:
+                fb.set_gate(json.load(f)['rows'], self.book_filter_field, self.book_filter_p)
+            fb.engine_masks = fastbook.engine_masks
+            Sample._fastbooks[key] = fb
+        calls = [c for c in auction if c != 'PAD_START']
+        dealer = len(auction) - len(calls)
+        scoring = 'MP' if models.matchpoint else 'IMP'
+        checks = []
+        for i, c in enumerate(calls):
+            seat = (dealer + i) % 4
+            idx = (seat - nesw_i) % 4 - 1             # 0 left-hand opponent, 1 partner, 2 right-hand opponent
+            if idx < 0:
+                continue
+            we, they = vuln[seat % 2], vuln[(seat + 1) % 2]
+            vul = 'All' if we and they else 'NS' if we else 'EW' if they else 'None'
+            checks.append((idx, ['P' if x == 'PASS' else x for x in calls[:i]], vul, scoring, 'P' if c == 'PASS' else c))
+        if not checks:
+            return lho_pard_rho
+        reject, _, _ = fb.filter(fb.engine_masks(lho_pard_rho), checks)
+        Sample.book_filter_counts[0] += len(reject)
+        Sample.book_filter_counts[1] += int(reject.sum())
+        return lho_pard_rho[~reject]
+
+    book_filter_counts = [0, 0]
+
     def sample_cards_auction(self, auction, nesw_i, hand_str, vuln, n_samples, rng, models, old_c_hcp, old_c_shp, aceking, extend_samples = True, verbose = False):
         hand = binary.parse_hand_f(models.n_cards_bidding)(hand_str)
         n_steps = binary.calculate_step_bidding_info(auction)
@@ -701,6 +751,11 @@ class Sample:
             accepted_samples = lho_pard_rho[:self.sample_hands_auction]
             return accepted_samples, bidding_scores, c_hcp, c_shp, quality
 
+
+        if getattr(self, 'book_filter', ''):
+            lho_pard_rho = self.book_filter_deals(lho_pard_rho, auction, nesw_i, vuln, models)
+            if lho_pard_rho.shape[0] == 0:
+                return lho_pard_rho, [], c_hcp, c_shp, -1
 
         # Rearrange the players in the order [2, 3, 1]
         players = [players[1], players[2], players[0]]
