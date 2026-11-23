@@ -308,8 +308,7 @@ class BotBid:
         call = 'PASS' if call == 'P' else call
         if call not in bidding.BID2ID or not bidding.can_bid(call, auction):
             return None
-        if self.verbose:
-            print(f"book_turns: {call} (table {table}, rule {number}, margin {margin}, trust {t['low']})")
+        sys.stderr.write(f"book_turns: {call} (table {table}, rule {number}, margin {margin}, trust {t['low']})\n")
         return call
 
     def six_card_jump_to_two(self, auction, chosen):
