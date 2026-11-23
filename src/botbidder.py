@@ -283,7 +283,7 @@ class BotBid:
         trust.py build>: the book answers the whole turn, before the network and the search, where its row and
         margin made Morty's call on at least book_turns_p of the trust run's turns (95% lower bound) and Morty's
         search ran on at most book_turns_search_max of them (0.05: the safe gate of audit/fast-bidder.md; 1: any
-        row). Returns the call, or None. Empty = off."""
+        row). book_turns_tables = silent,... keeps only those tables. Returns the call, or None. Empty = off."""
         path = getattr(self.sampler, 'book_turns', '')
         if not path:
             return None
@@ -298,6 +298,9 @@ class BotBid:
         calls = ['P' if c == 'PASS' else c for c in auction if c != 'PAD_START']
         call, table, number, margin = book.bid_margin(self.hand_str, calls, vul, 'MP' if self.models.matchpoint else 'IMP')
         if call is None:
+            return None
+        tables = getattr(self.sampler, 'book_turns_tables', None)
+        if tables and table not in tables:
             return None
         t = trust.get(f'{table}:{number}:{margin}')
         if t is None or t['low'] < self.sampler.book_turns_p or t['search'] > self.sampler.book_turns_search_max:

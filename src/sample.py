@@ -198,6 +198,9 @@ class Sample:
         sample.book_turns_trust = conf.get('sampling', 'book_turns_trust', fallback='').strip()
         sample.book_turns_p = conf.getfloat('sampling', 'book_turns_p', fallback=0.99)
         sample.book_turns_search_max = conf.getfloat('sampling', 'book_turns_search_max', fallback=0.05)
+        # book_turns_tables = silent,openings: only those tables of the book answer (empty = every table)
+        tables = conf.get('sampling', 'book_turns_tables', fallback='').strip()
+        sample.book_turns_tables = {x.strip() for x in tables.split(',') if x.strip()} or None
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()
