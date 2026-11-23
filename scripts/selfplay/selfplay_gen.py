@@ -82,6 +82,17 @@ def worker_init(cfg):
     W['robots'] = W['learner'] if cfg['table'] == 'self' else net(cfg['robots'])
     W['also'] = [net(path) for path in cfg['also']]
     W['learner_seats'] = (0, 1, 2, 3) if cfg['table'] == 'self' else (2,)
+    if cfg['table'] == 'live':
+        # the robots are Brill's own service, through brill_live.py's cache, lock and daily budget
+        sys.path.insert(0, os.path.join(sp_common.BEN_ROOT, 'scripts', 'match', 'brill'))
+        import brill_live
+        brill_live.W['cfg'] = {'cache': cfg['cache'], 'url': cfg['url'], 'pause': cfg['pause'],
+                               'daily_budget': cfg['daily_budget']}
+        brill_live.W['lock'] = brill_live.FileLock(cfg['cache'] + '.lock')
+        brill_live.W['cache'] = {}
+        brill_live.W['cache_size'] = 0
+        brill_live.read_cache()
+        W['brill_live'] = brill_live
     if cfg['mode'] == 'search':
         sys.path.insert(0, os.path.join(sp_common.BEN_ROOT, 'scripts', 'match'))
         import ab_match
@@ -132,14 +143,27 @@ def run_deal(board, dd):
         seat = len(auction) % 4
         return sp_common.ranked_legal(net.probs(hand_bin(net, seat), vuln, auction), auction, limit)
 
+    asked = [0]
+
+    def robot(auction):
+        """The robots' call: their network's first choice, or (--table live) Brill's own robot."""
+        if cfg['table'] != 'live':
+            return ranked(robots, auction, 1)[0][0]
+        seat = len(auction) % 4
+        call, new = W['brill_live'].robot_call(board, seat, hands[seat], [from_ben(c) for c in auction[dealer_i:]])
+        asked[0] += new
+        call = sp_common.to_ben(call)
+        if not bidding.can_bid(call, auction):
+            raise ValueError(f'illegal call {call} by {SEATS[seat]} after {auction[dealer_i:]}')
+        return call
+
     def finish(auction):
         """Everybody makes the call their network rates highest until the auction is over."""
         auction = list(auction)
         while not bidding.auction_over(auction):
             if len(auction) > MAX_CALLS:
                 raise ValueError(f'auction does not end: {auction}')
-            net = learner if len(auction) % 4 in seats else robots
-            auction.append(ranked(net, auction, 1)[0][0])
+            auction.append(ranked(learner, auction, 1)[0][0] if len(auction) % 4 in seats else robot(auction))
         return auction
 
     def search_call(seat, auction):
@@ -163,7 +187,7 @@ def run_deal(board, dd):
             raise ValueError(f'auction does not end: {auction}')
         seat = len(auction) % 4
         if seat not in seats:
-            call = ranked(robots, auction, 1)[0][0]
+            call = robot(auction)
         elif cfg['mode'] == 'search':
             call = search_call(seat, auction)
         elif cfg['mode'] == 'net':
@@ -202,6 +226,8 @@ def run_deal(board, dd):
            'calls': [from_ben(c) for c in auction[dealer_i:]], 'contract': contract, 'score': score, 'dd': dd}
     if cfg['mode'] == 'explore':
         rec['decisions'] = decisions
+    if cfg['table'] == 'live':
+        rec['requests'] = asked[0]
     return rec
 
 
@@ -210,8 +236,14 @@ def main():
     parser.add_argument('--conf', required=True, help="the learner's config (relative to src, or absolute)")
     parser.add_argument('--out', required=True)
     parser.add_argument('--mode', choices=['explore', 'net', 'search'], default='explore')
-    parser.add_argument('--table', choices=['brill', 'self'], default='brill',
-                        help='brill: learner South, --robots in the other seats. self: the learner in all four')
+    parser.add_argument('--table', choices=['brill', 'self', 'live'], default='brill',
+                        help='brill: learner South, --robots in the other seats. self: the learner in all four. '
+                             "live: learner South, Brill's own robots (its /bid service) in the other seats")
+    parser.add_argument('--cache', help="--table live: the robots' answers (brill_live.py's cache file, shared)")
+    parser.add_argument('--url', default='https://brillservice.aalborgdata.dk', help="--table live: Brill's service")
+    parser.add_argument('--daily-budget', type=int, default=0,
+                        help='--table live: most requests in one calendar day (UTC) over all runs sharing --cache')
+    parser.add_argument('--pause', type=float, default=0.0, help='--table live: seconds to wait after each request')
     parser.add_argument('--robots', default='config/Brill-21GF.conf', help='config whose bidder network plays the robots')
     parser.add_argument('--also', action='append', default=[],
                         help='explore: a config whose network also names a candidate (its first choice); may be repeated')
@@ -236,6 +268,8 @@ def main():
 
     if args.mode == 'search' and args.table == 'self':
         raise SystemExit('search mode is for the brill table; two full settings in all four seats: scripts/match/ab_match.py')
+    if args.table == 'live' and not (args.cache and args.daily_budget):
+        raise SystemExit('--table live needs --cache and --daily-budget (the shared count of requests to Brill)')
     started = datetime.datetime.now()
     if args.deals:
         boards = [json.loads(line) for line in open(args.deals, encoding='utf-8')]
@@ -266,7 +300,9 @@ def main():
            'also': [sp_common.resolve_conf(p) for p in args.also], 'out': args.out, 'mode': args.mode,
            'table': args.table, 'cand_min_p': args.cand_min_p, 'cand_max': args.cand_max,
            'inject': args.inject, 'cand_limit': args.cand_limit, 'sample': args.sample,
-           'tf_threads': args.tf_threads or (2 if args.mode == 'search' else 1), 'dds_threads': args.dds_threads}
+           'tf_threads': args.tf_threads or (2 if args.mode == 'search' else 1), 'dds_threads': args.dds_threads,
+           'cache': os.path.abspath(args.cache) if args.cache else None, 'url': args.url.rstrip('/'),
+           'daily_budget': args.daily_budget, 'pause': args.pause}
     with open(os.path.join(args.out, 'run.json'), 'w') as f:
         json.dump({'argv': sys.argv, 'cfg': cfg, 'deals': source, 'started': started.isoformat(timespec='seconds'),
                    'learner_network': sp_common.NetSpec(cfg['conf']).bidder_path}, f, indent=1)
@@ -287,6 +323,8 @@ def main():
                         counts['errors'] += 1
                         continue
                     counts['deals'] += 1
+                    if 'requests' in r:
+                        counts['requests'] = counts.get('requests', 0) + r['requests']
                     for d in r.get('decisions', ()):
                         counts['decisions'] += 1
                         counts['changed'] += any(c[3] != d['cands'][0][3] for c in d['cands'][1:])

@@ -100,8 +100,12 @@ def main():
     if args.base_rows and args.base_rows < len(static):
         keep = np.linspace(0, len(static) - 1, args.base_rows).astype(np.int64)
         static, bids, cls = static[keep], bids[keep], cls[keep]
+    # a base file may carry its own weights (refit_robots.py distill: weight 0 where the seat has no turn)
+    base_wgt = base['wgt'] if 'wgt' in base.files else np.ones(cls.shape, np.uint8)
+    if args.base_rows and args.base_rows < len(base_wgt):
+        base_wgt = base_wgt[keep]
     n_base = len(static)
-    parts = [(static, bids, cls, np.ones(cls.shape, np.uint8))]
+    parts = [(static, bids, cls, base_wgt)]
     for path in args.sp:
         sp = np.load(path)
         if sp['static'].shape[1] != static.shape[1]:

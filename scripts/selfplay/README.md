@@ -166,9 +166,18 @@ candidate chosen among many on one set of deals looks better on that set than it
   both tables (2026-11-20) the copy made the real robots' call on 96.1% of their turns, and
   the whole auction was the same on 74% of the deals. A call that gains against the copy may
   not gain against the robots; a call the copy has never met is where the two differ most.
-  Hence the check against the real robots.
+  Hence the check against the real robots. `selfplay_gen.py --table live` plays explore games
+  against Brill's own robots instead (through `brill_live.py`'s cache and daily budget), and
+  `refit_robots.py` fine-tunes the copy on the robots' saved answers. Neither has helped yet
+  (2026-11-22): 3,000 live explore games gave targets no better than the copy's, and the
+  refitted copy agrees more with the answers it was fitted on but not with unseen ones.
 - Results are double dummy, of the contract reached. Leads, defence and declarer play are not
-  in it.
+  in it. `play_model.py` learns real card play (tricks taken around the double dummy number)
+  from played robot boards and rescores explore's candidates by their expected real-play score;
+  `score_live_ab.py` scores the same way with `PLAY_MODEL` set. A model trained on rescored
+  targets (2026-11-22) gained +0.04 ±0.04 IMPs a deal by that scoring and lost 0.03 by double
+  dummy; Brill's own card play of 286 deals where its contract differed put it in between,
+  with no difference shown.
 - In explore, South's later calls on a tried line are the network's alone, without search.
 - The targets come from South's seat with these robots. The network is not asked to bid well
   with a partner who plays something else.
@@ -184,6 +193,8 @@ candidate chosen among many on one set of deals looks better on that set than it
 | `selfplay_train.py` | fine-tuning on base set plus targets, or by policy gradient |
 | `selfplay_compare.py` | two runs on the same deals, with the verdict |
 | `sp_common.py` | deals, IMPs, a bidding network as a plain policy |
+| `refit_robots.py` | training rows from the real robots' answers; the copy's own calls as anchor; agreement on held-out answers |
+| `play_model.py` | tricks in real play against double dummy: fit, check on held-out events, rescore explore games |
 
 Speed on a 64-core machine with an RTX 5080 (2026-11-20): explore about 0.4 processor-seconds
 a deal (500,000 deals in under an hour on 64 processes), fine-tuning under a minute an epoch,

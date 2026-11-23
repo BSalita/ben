@@ -11,12 +11,17 @@ after the first is set against the first on the deals both finished:
 with 95% intervals over deals. Also each config against par (IMPs), and the
 split by the deal's scoring (the config bids to that scoring).
 
+With the environment variable PLAY_MODEL set to a model of scripts/selfplay/play_model.py, a
+contract's score is instead its expected score in real card play (the distribution of tricks
+taken around the double-dummy number, learnt from played boards).
+
 Writes OUT_DIR/dd.json (20 trick counts and par per deal, reused), OUT_DIR/boards.parquet
 and OUT_DIR/compare.txt.
 """
 import io
 import json
 import multiprocessing as mp
+import os
 import pathlib
 import sys
 from datetime import datetime
@@ -76,6 +81,12 @@ def main():
                 dd[key] = value
         dd_path.write_text(json.dumps(dd))
 
+    play = None
+    if os.environ.get('PLAY_MODEL'):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'selfplay'))
+        import play_model
+        play = play_model.Model(json.load(open(os.environ['PLAY_MODEL'])))
+
     rows = []
     for name, run in runs.items():
         for key, r in run.items():
@@ -84,7 +95,11 @@ def main():
             if contract is None:
                 score, text = 0, 'Pass'
             else:
-                score = score_ns(*contract, dd[key]['tricks'][contract[1] + contract[3]], b['vul'])
+                tricks = dd[key]['tricks'][contract[1] + contract[3]]
+                if play is None:
+                    score = score_ns(*contract, tricks, b['vul'])
+                else:
+                    score = round(play.expected(*contract, tricks, b['vul']))
                 text = f'{contract[0]}{contract[1]}{contract[2]} {contract[3]}'
             rows.append({'config': name, 'key': key, 'scoring': b['scoring'], 'vul': b['vul'],
                          'auction': '-'.join(r['walk']), 'contract': text, 'score': int(score),
@@ -100,7 +115,8 @@ def main():
 
     names = list(runs)
     base = names[0]
-    say(f'{len(deals)} deals in {deals_path.name}; double-dummy scores, North-South view')
+    say(f"{len(deals)} deals in {deals_path.name}; "
+        f"{'expected real-play scores (' + os.environ['PLAY_MODEL'] + ')' if play else 'double-dummy scores'}, North-South view")
     say()
     say('Each config (boards finished, against par)')
     say(f"{'config':24s} {'boards':>6s} {'mean score':>10s} {'IMPs vs par':>11s} {'+-':>6s}")
