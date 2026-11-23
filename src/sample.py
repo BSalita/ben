@@ -185,6 +185,12 @@ class Sample:
         # the game-forcing two of it with six cards in the suit and at least that many HCP (empty = off)
         jump = conf.get('sampling', 'six_card_jump_to_two', fallback='').strip()
         sample.six_card_jump_to_two = int(jump) if jump else None
+        # book_opening = <folder of a morty-book edition's chapters>: in an opening position, when the search
+        # passes and the book opens, make the book's opening (claim C0005); book_opening_levels = 2,3 keeps only
+        # openings at those levels (empty = off)
+        sample.book_opening = conf.get('sampling', 'book_opening', fallback='').strip()
+        levels = conf.get('sampling', 'book_opening_levels', fallback='').strip()
+        sample.book_opening_levels = {int(x) for x in levels.split(',') if x.strip()} or None
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()

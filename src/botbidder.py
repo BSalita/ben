@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 import numpy as np
@@ -220,6 +221,44 @@ class BotBid:
         except Exception as error:      # the guard is advice: on any failure the candidates stay as they were
             sys.stderr.write(f"artificial_guard: {type(error).__name__}: {error}\n")
             return candidates
+
+    _books = {}
+
+    def book_opening(self, auction, chosen):
+        """[sampling] book_opening = <folder of a morty-book edition's chapters>: in an opening position (only
+        passes so far), when the search chooses Pass and the book opens, make the book's opening instead.
+        Claim C0005 of the morty-book: on fresh deals the book's opening, Morty bidding on, beat Morty's pass
+        by +0.18 IMPs a position (SAYC and SEF) and +0.27 (GIB), mostly with its weak twos and preempts; A/B match
+        (Morty in all four seats, on those boards) +0.42 +-0.12 IMPs a board (SAYC and SEF) and +0.37 +-0.15 (GIB).
+        book_opening_levels = 2,3 keeps only openings at those levels. Returns the call, or None. Empty = off."""
+        path = getattr(self.sampler, 'book_opening', '')
+        if not path or chosen != 'PASS':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) > 3 or any(c != 'PASS' for c in calls):
+            return None
+        book = BotBid._books.get(path)
+        if book is None:
+            code = os.path.abspath(path)
+            while code != os.path.dirname(code) and not os.path.exists(os.path.join(code, 'compile_book.py')):
+                code = os.path.dirname(code)
+            if code not in sys.path:
+                sys.path.append(code)
+            import compile_book
+            import coverage
+            compile_book.TABLES = [(flag, name) for flag, name, _ in coverage.TABLES]
+            book = BotBid._books[path] = compile_book.CompiledBook(path)
+        we, they = self.vuln[self.seat % 2], self.vuln[(self.seat + 1) % 2]
+        vul = 'All' if we and they else 'NS' if we else 'EW' if they else 'None'
+        call, table, rule = book.bid(self.hand_str, ['P'] * len(calls), vul, 'MP' if self.models.matchpoint else 'IMP')
+        if not call or call == 'P':
+            return None
+        levels = getattr(self.sampler, 'book_opening_levels', None)
+        if levels and int(call[0]) not in levels:
+            return None
+        if self.verbose:
+            print(f"book_opening: Pass becomes {call} (rule {rule})")
+        return call
 
     def six_card_jump_to_two(self, auction, chosen):
         """[sampling] six_card_jump_to_two = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
@@ -1011,7 +1050,8 @@ class BotBid:
             if self.verbose:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
 
-        rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
+        rule_bid = (self.book_opening(auction, candidates[0].bid)
+                    or self.six_card_jump_to_two(auction, candidates[0].bid)
                     or self.five_card_two_over_one(auction, candidates[0].bid)
                     or self.drury_to_raise(auction, candidates[0].bid)
                     or self.second_call_2nt_to_3nt(auction, candidates[0].bid)
