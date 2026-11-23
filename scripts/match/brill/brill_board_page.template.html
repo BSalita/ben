@@ -1,0 +1,329 @@
+<meta charset="utf-8">
+<title>Morty's Unofficial Brill Leaderboard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a working table. Summary figures, then findings, then the events; each event opens to its boards, each board to its deal. */
+:root {
+  --bg: #f6f8f6; --surface: #ffffff; --line: #d9e0db; --fg: #17201b; --muted: #5b6861;
+  --accent: #0f6b52; --accent-soft: #e0efe9;
+  --good: #116b3a; --good-bg: #dff3e6; --bad: #a3271b; --bad-bg: #fbe3df; --warn: #7a5200; --warn-bg: #fbefcf;
+  --red-suit: #b3261e; --bar: #9db7ac;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111613; --surface: #19201c; --line: #2e3833; --fg: #e6ece8; --muted: #9aa8a0;
+  --accent: #5fc7a6; --accent-soft: #1d3a31;
+  --good: #7fd8a0; --good-bg: #173524; --bad: #ff9c8f; --bad-bg: #44201b; --warn: #f0c56a; --warn-bg: #3d3113;
+  --red-suit: #ff8a80; --bar: #4f6e62; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111613; --surface: #19201c; --line: #2e3833; --fg: #e6ece8; --muted: #9aa8a0;
+  --accent: #5fc7a6; --accent-soft: #1d3a31;
+  --good: #7fd8a0; --good-bg: #173524; --bad: #ff9c8f; --bad-bg: #44201b; --warn: #f0c56a; --warn-bg: #3d3113;
+  --red-suit: #ff8a80; --bar: #4f6e62; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+h1 { font-size: 26px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
+p { margin: 0; max-width: 78ch; }
+.lede { color: var(--muted); margin-top: 6px; }
+.note { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 8px 12px; max-width: none; }
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.figure b { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.figure span { color: var(--muted); font-size: 13px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--surface); }
+tr:last-child > td { border-bottom: 0; }
+td.n, th.n { text-align: right; }
+td.wrapcell { white-space: normal; min-width: 220px; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.r { color: var(--red-suit); }
+.good { background: var(--good-bg); color: var(--good); }
+.bad { background: var(--bad-bg); color: var(--bad); }
+.tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+.tag.pending { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
+.controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.controls select, .controls input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; font-size: 14px; padding: 6px 12px; border: 0; background: var(--surface); color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+button:focus-visible, select:focus-visible, input:focus-visible, tr[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+tr.event, tr.board { cursor: pointer; }
+tr.event:hover > td, tr.board:hover > td { background: var(--accent-soft); }
+tr.event > td:first-child::before { content: "▸"; display: inline-block; width: 1.1em; color: var(--accent); }
+tr.event.open > td:first-child::before { content: "▾"; }
+tr.inner > td { padding: 0 0 0 18px; background: var(--bg); }
+tr.inner table th { background: var(--bg); }
+tr.detail > td { background: var(--bg); white-space: normal; padding: 12px 14px; }
+.deal { display: grid; grid-template-columns: repeat(3, max-content); gap: 4px 22px; font-family: var(--mono); font-size: 13px; line-height: 1.35; }
+.deal .N { grid-column: 2; grid-row: 1; } .deal .W { grid-column: 1; grid-row: 2; } .deal .E { grid-column: 3; grid-row: 2; } .deal .S { grid-column: 2; grid-row: 3; }
+.deal .seat { color: var(--muted); font-family: var(--sans); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.detailgrid { display: flex; flex-wrap: wrap; gap: 14px 36px; align-items: start; }
+.detailgrid dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; min-width: 0; }
+.detailgrid dt { color: var(--muted); font-size: 12px; } .detailgrid dd { margin: 0; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+h3 .sub { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr)); gap: 18px 20px; }
+.charts > * { min-width: 0; }
+.charts.wide { grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr)); }
+table.rank th, table.rank td { padding: 4px 10px; }
+table.rank .barcell { width: 42%; min-width: 130px; }
+.track { position: relative; height: 10px; }
+.track .zero { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--muted); }
+.track .bar { position: absolute; top: 0; bottom: 0; background: var(--bar); border-radius: 0 4px 4px 0; }
+.track .bar.neg { border-radius: 4px 0 0 4px; }
+tr.us > td { font-weight: 600; background: var(--accent-soft); }
+tr.us .bar { background: var(--accent); }
+tr.below > td { border-top: 2px solid var(--line); }
+.btn { font: inherit; font-size: 14px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn:disabled { color: var(--muted); cursor: default; opacity: .6; }
+.more { align-self: start; font: inherit; padding: 7px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); cursor: pointer; }
+.defs { color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
+.defs b { color: var(--fg); font-weight: 600; }
+.views { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.views a { font-size: 14px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); text-decoration: none; }
+.views a:hover { background: var(--accent-soft); }
+.views a[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.viewtext { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.mk { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+[hidden] { display: none !important; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Morty's Unofficial Brill Leaderboard</h1>
+    <p class="lede" id="lede"></p>
+    <nav class="views" id="views" aria-label="Results to show" hidden></nav>
+    <p class="viewtext" id="viewtext" hidden></p>
+  </header>
+  <p class="note" id="pending" hidden></p>
+  <section class="figures" id="figures"></section>
+  <section>
+    <h2>Models behind these results</h2>
+    <p class="lede" id="models-lede" style="margin:0 0 12px"></p>
+    <div class="scroll"><table id="models"></table></div>
+  </section>
+  <section>
+    <h2>Lifetime top ten</h2>
+    <p class="lede" id="lifetime-lede" style="margin:0 0 12px"></p>
+    <div class="charts wide" id="lifetime"></div>
+  </section>
+  <section>
+    <h2>Top ten of each event, day by day</h2>
+    <p class="lede" style="margin:0 0 12px"><span id="day-lede">The standings of each event of one day. Morty AI's row is its own table in the events it entered and, before that, its replay added to every board's field.</span> Entrants who played all the event's boards are ranked. Morty AI is the shaded row; when it is outside the top ten it is added below with its rank.</p>
+    <div class="controls">
+      <button class="btn" id="day-prev">◂ Earlier day</button>
+      <label>Day<select id="day"></select></label>
+      <button class="btn" id="day-next">Later day ▸</button>
+    </div>
+    <div class="charts" id="daily" style="margin-top:14px"></div>
+  </section>
+  <section>
+    <h2>Where the bidding gains and loses</h2>
+    <p class="lede" style="margin:0 0 12px">Each board is put in one group by how our contract differs from the contract most tables reached. The two DD columns take the card play out: the double-dummy result of our contract against that of most tables' contract, and against par.</p>
+    <div class="scroll"><table id="groups"></table></div>
+  </section>
+  <section class="cols">
+    <div><h2>Best boards for our bidding</h2><div class="scroll"><table id="best"></table></div></div>
+    <div><h2>Worst boards for our bidding</h2><div class="scroll"><table id="worst"></table></div></div>
+  </section>
+  <section>
+    <h2>Events and boards</h2>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="View">
+        <button id="view-events" aria-pressed="true">By event</button><button id="view-boards" aria-pressed="false">All boards</button>
+      </div>
+      <label>Scoring<select id="f-scoring"><option value="">MP and IMP</option><option>MP</option><option>IMP</option></select></label>
+      <label>Group<select id="f-group"><option value="">All groups</option></select></label>
+      <label>Find event or date<input id="f-text" type="search" placeholder="2026-11 or strongest"></label>
+      <label id="sortwrap" hidden>Sort boards by<select id="f-sort">
+        <option value="date">Date, newest first</option><option value="worst">Result against the field, worst first</option>
+        <option value="best">Result against the field, best first</option><option value="fieldworst">Bidding against most tables (double dummy), worst first</option><option value="fieldbest">Bidding against most tables (double dummy), best first</option><option value="bidworst">Bidding against par (double dummy), worst first</option>
+        <option value="evworst">DD_EV below Par_EV, largest first</option></select></label>
+    </div>
+    <p class="lede" id="count" style="margin:10px 0"></p>
+    <div class="scroll"><table id="main"></table></div>
+    <button class="more" id="more" hidden style="margin-top:12px">Show more boards</button>
+  </section>
+  <section class="defs">
+    <h2 style="color:var(--fg)">Columns</h2>
+    <div id="col-contract"><b>Contract, By, Result, Score</b> In the events Morty AI entered, its table in the event. Before that, a replay: Morty AI bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.</div>
+    <div><b>Model</b> The bidding model behind the row: for Morty AI's own table, the setting prod served when the board was played (Brill records the time); for a replay, the replayed model. The full names are in the table of models.</div>
+    <div><b>Pct / IMP</b> Our score against every real table of the board: matchpoint percentage in MP events, average cross-IMPs in IMP events.</div>
+    <div><b>DD</b> The double-dummy result of our contract and its North-South score.</div>
+    <div><b>DD_EV</b> The expected North-South score of our contract when the two hands of the non-declaring side are dealt at random (40 deals, each solved double dummy).</div>
+    <div><b>Par</b> The double-dummy par score and contract.</div>
+    <div><b>Par_EV</b> The DD_EV of the par contract: its expected North-South score by the same random deals. With several par contracts, the highest of their expected scores. The solver names a par contract at the lowest level that earns the par score (1♠ making nine tricks, not 3♠), and that contract is the one valued.</div>
+    <div><b>Result from</b> "Played in the event": Morty AI's own table as an entrant. "Brill table": the Brill entrant had our auction, or played our contract, in the event. "Autoplay": Brill's service played our auction now. "DD, autoplay pending": not played yet; the double-dummy result stands in.</div>
+  </section>
+</div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SUIT = {S:'♠', H:'♥', D:'♦', C:'♣', N:'NT'};
+const suit = l => l === 'H' || l === 'D' ? `<span class="r">${SUIT[l]}</span>` : SUIT[l];
+const contract = c => !c || c === 'Pass' ? 'Pass' : c[0] + suit(c[1]) + esc(c.slice(2));
+const parText = t => esc(t).replace(/(\d)(NT|[SHDC])/g, (m, l, s) => l + suit(s[0]));
+const signed = (x, d = 0) => x == null ? '' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d);
+const tone = b => b.sc === 'MP' ? (b.pct >= 65 ? 'good' : b.pct <= 35 ? 'bad' : '') : (b.imp >= 2 ? 'good' : b.imp <= -2 ? 'bad' : '');
+const measure = b => b.sc === 'MP' ? b.pct.toFixed(0) + '%' : signed(b.imp, 1);
+const SRC = {'played': 'Played in the event', 'brill-auction': 'Brill table, same auction', 'brill-contract': 'Brill table, same contract', 'autoplay': 'Autoplay', 'dd-pending': 'DD, autoplay pending', 'passout': 'Passed out'};
+const eventOf = Object.fromEntries(D.events.map(e => [e.id, e]));
+const boardsOf = {};
+D.boards.forEach(b => (boardsOf[b.t] = boardsOf[b.t] || []).push(b));
+
+const VIEW = D.view || 'as-played';
+const M = D.models || [];
+const mk = i => M[i] ? `<span class="mk" title="${esc(M[i].name)}">${esc(M[i].key)}</span>` : '';
+const span = `${D.events.length} closed Brill daily events, ${D.boards.length} boards, ${D.first} to ${D.last}`;
+$('lede').textContent = (VIEW === 'real'
+  ? `Morty AI's own tables in the ${D.events.length} closed Brill daily events it entered (listed there as MortyAI), ${D.boards.length} boards, ${D.first} to ${D.last}. Each board was bid and played by the setting prod served at the time; the table of models below names them. `
+  : VIEW === 'replay'
+  ? `A replay of bidding model ${D.model} seated South in ${span}: North, East and West make the calls the Brill robots made and Brill's robots play the cards. It covers the events Morty AI entered too, where its own table is left out of the field. ` +
+    (D.left_out ? `${D.left_out} events are not shown: the model has not bid all their boards yet. ` : '')
+  : `Morty AI seated South in ${span}. ` +
+    (D.entered ? `Since ${D.entered.first} Morty AI is an entrant of the dailies (listed there as MortyAI): its ${D.entered.events} events since then, ${D.entered.boards} boards, are its real tables. The earlier events are a replay of bidding model ${D.model} against the calls the Brill robots made. ` : `A replay of bidding model ${D.model} against the calls the Brill robots made. `)) +
+  `Made ${D.made}.`;
+if ((D.views || []).length > 1) {
+  $('views').hidden = false;
+  $('views').innerHTML = D.views.map(v => `<a href="/daily-leaderboard${v.id ? '/' + v.id : ''}"${v.current ? ' aria-current="page"' : ''} title="${esc(v.text)}">${esc(v.title)}</a>`).join('');
+  const cur = D.views.find(v => v.current);
+  if (cur && cur.text) { $('viewtext').hidden = false; $('viewtext').textContent = cur.text; }
+}
+if (VIEW === 'real') {
+  $('day-lede').textContent = "The standings of each event of one day, with Morty AI's own table.";
+  $('col-contract').innerHTML = "<b>Contract, By, Result, Score</b> Morty AI's table in the event: it bid South and played the cards with three Brill robots. Score is North-South's.";
+} else if (VIEW === 'replay') {
+  $('day-lede').textContent = "The standings of each event of one day, with the replay added to every board's field in Morty AI's place.";
+  $('col-contract').innerHTML = "<b>Contract, By, Result, Score</b> The replay: the model bids South; North, East and West make the calls the Brill robots made, and Brill's robots then play all four hands. Score is North-South's.";
+}
+$('models-lede').textContent = VIEW === 'replay'
+  ? 'Every row of this view is the one replayed model.'
+  : VIEW === 'real'
+  ? "The setting prod served behind each of Morty AI's tables, by the play time Brill records for the board."
+  : 'The bidding model behind each row. A replayed model is the same on every board; for Morty AI\'s own tables it is the setting prod served when the board was played, by the play time Brill records. Other views (links at the top) show the saved results of each replayed model on every event.';
+$('models').innerHTML = `<tr><th>Model</th><th>Name</th><th class="n">Events</th><th class="n">Boards</th><th>From</th><th>To</th></tr>` +
+  M.map(m => `<tr><td class="mono">${esc(m.key || '—')}</td><td class="wrapcell">${esc(m.name)}</td><td class="n">${m.events}</td><td class="n">${m.boards}</td><td>${m.first}</td><td>${m.last}</td></tr>`).join('');
+if (D.pending) { $('pending').hidden = false; $('pending').textContent = `${D.pending} of ${D.boards.length} boards still wait for Brill's autoplay and show the double-dummy result of our contract instead. They are marked in the last column and the page is rebuilt as results arrive.`; }
+$('figures').innerHTML = D.figures.map(f => `<div class="figure"><b>${esc(f.value)}</b><span>${esc(f.label)}</span></div>`).join('');
+
+$('groups').innerHTML = `<tr><th>Group</th><th class="n">Boards</th><th class="n">MP events, avg %</th><th class="n">IMP events, avg IMP</th><th class="n">DD IMPs vs most tables, per board</th><th class="n">Total</th><th class="n">DD IMPs vs par</th><th class="n">DD_EV − Par_EV</th><th>What it shows</th></tr>` +
+  D.groups.map(g => `<tr><td>${esc(g.name)}</td><td class="n">${g.boards}</td><td class="n ${g.pct >= 55 ? 'good' : g.pct <= 45 ? 'bad' : ''}">${g.pct == null ? '' : g.pct.toFixed(1)}</td><td class="n ${g.imp >= 0.5 ? 'good' : g.imp <= -0.5 ? 'bad' : ''}">${g.imp == null ? '' : signed(g.imp, 2)}</td><td class="n ${g.vsfield >= 0.5 ? 'good' : g.vsfield <= -0.5 ? 'bad' : ''}">${signed(g.vsfield, 2)}</td><td class="n">${signed(g.vsfield_total)}</td><td class="n">${signed(g.bid, 2)}</td><td class="n">${g.ev == null ? '' : signed(g.ev, 0)}</td><td class="wrapcell">${esc(g.text)}</td></tr>`).join('');
+$('f-group').innerHTML += D.groups.map(g => `<option>${esc(g.name)}</option>`).join('');
+
+// A ranking as a table with a bar: the distance of each entrant's result from average (50% or 0 IMPs).
+function rankChart(rows, scoring, life) {
+  const base = scoring === 'MP' ? 50 : 0;
+  const devs = rows.map(r => r[2] - base), lo = Math.min(0, ...devs), hi = Math.max(0, ...devs), span = (hi - lo) || 1;
+  const fmt = m => scoring === 'MP' ? m.toFixed(1) + '%' : signed(m, 2);
+  const head = `<tr><th class="n">#</th><th>Entrant</th><th>${scoring === 'MP' ? 'Against 50%' : 'Against 0 IMPs'}</th><th class="n">${scoring === 'MP' ? 'Avg board' : 'IMPs / board'}</th>${life ? '<th class="n">Events</th><th class="n">Wins</th><th class="n">Top 3</th>' : ''}</tr>`;
+  return head + rows.map((r, k) => {
+    const d = devs[k], left = (Math.min(d, 0) - lo) / span * 100, width = Math.abs(d) / span * 100;
+    return `<tr class="${r[3] ? 'us' : ''}${r[0] > 10 ? ' below' : ''}" title="${esc(r[1])}: ${fmt(r[2])}, rank ${r[0]}"><td class="n">${r[0]}</td><td>${esc(r[1])}</td>` +
+      `<td class="barcell"><div class="track"><i class="zero" style="left:${-lo / span * 100}%"></i><i class="bar${d < 0 ? ' neg' : ''}" style="left:${left}%;width:${width}%"></i></div></td>` +
+      `<td class="n">${fmt(r[2])}</td>${life ? `<td class="n">${r[4]}</td><td class="n">${r[5]}</td><td class="n">${r[6]}</td>` : ''}</tr>`;
+  }).join('');
+}
+$('lifetime-lede').textContent = `Each entrant's average board over the events it completed. ${VIEW === 'real' ? "Morty AI's average is over its own tables." : VIEW === 'replay' ? "Morty AI's average is the replay's." : "Morty AI's average joins its replay of the events before it entered with its own tables since."} Ranked are the entrants with at least ${D.lifetime_min} events of that scoring. They did not all play the same events: Morty AI is seated in every one, the others in those they entered.`;
+$('lifetime').innerHTML = ['MP', 'IMP'].filter(sc => D.lifetime[sc]).map(sc => { const n = D.events.filter(e => e.scoring === sc).length;
+  return `<div><h3>${sc === 'MP' ? 'Matchpoint events' : 'IMP events'}<span class="sub">${n} events, ${D.lifetime[sc].ranked} ranked entrants</span></h3><div class="scroll"><table class="rank">${rankChart(D.lifetime[sc].rows, sc, true)}</table></div></div>`; }).join('');
+
+const days = [...new Set(D.events.map(e => e.date))].sort().reverse();
+$('day').innerHTML = days.map(d => `<option>${d}</option>`).join('');
+const eventChart = e => `<div><h3>${esc(e.short)}<span class="sub">${e.entrants} entrants, Morty AI ${e.rank}</span></h3><div class="scroll"><table class="rank">${rankChart(D.ranks[e.id], e.scoring)}</table></div></div>`;
+function renderDay() {
+  const k = days.indexOf($('day').value);
+  $('daily').innerHTML = D.events.filter(e => e.date === days[k]).sort((a, b) => a.short.localeCompare(b.short)).map(eventChart).join('');
+  $('day-prev').disabled = k >= days.length - 1; $('day-next').disabled = k <= 0;
+}
+$('day').addEventListener('input', renderDay);
+$('day-prev').addEventListener('click', () => { $('day').value = days[Math.min(days.indexOf($('day').value) + 1, days.length - 1)]; renderDay(); });
+$('day-next').addEventListener('click', () => { $('day').value = days[Math.max(days.indexOf($('day').value) - 1, 0)]; renderDay(); });
+renderDay();
+
+const shortRow = b => { const e = eventOf[b.t]; return `<tr><td>${e.date}</td><td>${esc(e.short)} · ${b.b}</td><td>${contract(b.c)} ${b.by || ''} ${b.r || ''}</td><td class="n">${signed(b.s)}</td><td class="n ${tone(b)}">${measure(b)}</td><td>${esc(b.fc)}</td></tr>`; };
+const shortHead = `<tr><th>Date</th><th>Event · board</th><th>Our contract</th><th class="n">Score</th><th class="n">Pct / IMP</th><th>Most tables</th></tr>`;
+$('best').innerHTML = shortHead + D.best.map(i => shortRow(D.boards[i])).join('');
+$('worst').innerHTML = shortHead + D.worst.map(i => shortRow(D.boards[i])).join('');
+
+const BOARD_HEAD = `<th>Bd</th><th>Dlr / Vul</th><th>Contract</th><th>By</th><th>Result</th><th class="n">Score</th><th class="n">Pct / IMP</th><th>DD</th><th class="n">DD_EV</th><th>Par</th><th>Par_EV</th><th>Result from</th><th>Model</th>`;
+function boardRow(b, withEvent) {
+  const e = eventOf[b.t];
+  const lead = withEvent ? `<td>${e.date}</td><td>${esc(e.short)}</td>` : '';
+  return `<tr class="board" tabindex="0" data-i="${b.i}">${lead}<td class="n">${b.b}</td><td>${b.dl} / ${b.v}</td><td>${contract(b.c)}</td><td>${b.by || ''}</td><td>${b.r || ''}</td><td class="n">${signed(b.s)}</td><td class="n ${tone(b)}">${measure(b)}</td>` +
+    `<td>${b.ddr == null ? '' : b.ddr + ' · '}${signed(b.dds)}</td><td class="n">${signed(b.ddev)}</td><td>${signed(b.par)} · ${parText(b.parc)}</td><td>${signed(b.parev)} · ${contract(b.parevc.split(' ')[0])} ${b.parevc.split(' ')[1] || ''}</td>` +
+    `<td>${SRC[b.src]}${b.rob === 'simulated' ? '<span class="tag" title="South left every recorded auction; a model of the Brill robots bid the other seats from there">robots simulated</span>' : ''}</td><td>${mk(b.m)}</td></tr>`;
+}
+function hand(h) { const s = h.split('.'); return ['S','H','D','C'].map((l, k) => `${suit(l)} ${esc(s[k] || '—')}`).join('<br>'); }
+function detail(b, span) {
+  const hands = b.deal.slice(2).split(' '), first = 'NESW'.indexOf(b.deal[0]);
+  const seats = {}; hands.forEach((h, k) => seats['NESW'[(first + k) % 4]] = h);
+  const cells = 'NWES'.split('').map(p => `<div class="${p}"><div class="seat">${{N:'North',E:'East',S:'South (Morty AI)',W:'West'}[p]}</div>${hand(seats[p])}</div>`).join('');
+  return `<tr class="detail"><td colspan="${span}"><div class="detailgrid"><div class="deal">${cells}</div><dl>
+    <dt>Auction from ${b.dl}</dt><dd class="mono">${esc(b.a).replace(/(\d)([SHDCN])/g, (m, l, s) => l + suit(s))}</dd>
+    <dt>Most tables</dt><dd>${esc(b.fc)} (${b.fcs}% of ${b.n} tables), field median ${signed(b.fm)}</dd>
+    <dt>Brill entrant</dt><dd>${b.bc ? esc(b.bc) + ', ' + signed(b.bs) : 'not at this board'}</dd>
+    <dt>Against the field</dt><dd>${b.pct.toFixed(1)}% and ${signed(b.imp, 2)} IMPs</dd>
+    <dt>Bidding alone</dt><dd>${signed(b.vf)} IMPs against most tables' contract, ${signed(b.bid)} against par (both double dummy)</dd>
+    <dt>Group</dt><dd>${esc(b.g)}</dd>
+    <dt>Bid by</dt><dd>${M[b.m] ? esc(M[b.m].name) + (M[b.m].key ? ` (${esc(M[b.m].key)})` : '') : ''}${b.at ? `, played ${b.at} UTC` : ''}</dd></dl></div></td></tr>`;
+}
+
+let view = 'events', shown = 200;
+function passes(b, e) {
+  const sc = $('f-scoring').value, g = $('f-group').value, t = $('f-text').value.trim().toLowerCase();
+  return (!sc || e.scoring === sc) && (!g || b.g === g) && (!t || (e.date + ' ' + e.event).toLowerCase().includes(t));
+}
+function render() {
+  const main = $('main');
+  $('sortwrap').hidden = view !== 'boards';
+  if (view === 'events') {
+    const g = $('f-group').value;
+    const events = D.events.filter(e => boardsOf[e.id].some(b => passes(b, e)));
+    $('count').textContent = `${events.length} events${g ? ' with a board in this group' : ''}. Select an event for its boards, a board for its deal and auction.`;
+    main.innerHTML = `<tr><th>Date</th><th>Event</th><th>Scoring</th><th class="n">Our result</th><th class="n">Rank</th><th>Winner</th><th class="n">Bidding IMPs vs par</th><th>Model</th></tr>` +
+      events.map(e => `<tr class="event" tabindex="0" data-e="${e.id}"><td>${e.date}</td><td>${esc(e.short)}${e.pending ? `<span class="tag pending">${e.pending} pending</span>` : ''}</td><td>${e.scoring}</td>` +
+        `<td class="n">${e.scoring === 'MP' ? e.measure.toFixed(1) + '%' : signed(e.measure, 2)}</td><td class="n ${e.rank <= 3 ? 'good' : e.rank > e.entrants * 0.75 ? 'bad' : ''}">${e.rank} of ${e.entrants}</td>` +
+        `<td>${esc(e.winner)} ${e.scoring === 'MP' ? e.winner_measure.toFixed(1) + '%' : signed(e.winner_measure, 2)}</td><td class="n">${signed(e.bid, 2)}</td><td>${mk(e.m)}</td></tr>`).join('');
+    $('more').hidden = true;
+  } else {
+    let rows = D.boards.filter(b => passes(b, eventOf[b.t]));
+    const key = {date: b => -b.i, worst: b => b.imp, best: b => -b.imp, fieldworst: b => b.vf, fieldbest: b => -b.vf, bidworst: b => b.bid, evworst: b => b.ddev - b.parev}[$('f-sort').value];
+    rows = rows.map(b => [key(b), b]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+    $('count').textContent = `${rows.length} boards, ${Math.min(shown, rows.length)} shown.`;
+    main.innerHTML = `<tr><th>Date</th><th>Event</th>${BOARD_HEAD}</tr>` + rows.slice(0, shown).map(b => boardRow(b, true)).join('');
+    $('more').hidden = rows.length <= shown;
+  }
+}
+function toggle(row) {
+  if (row.classList.contains('event')) {
+    if (row.classList.toggle('open')) {
+      const e = eventOf[row.dataset.e];
+      const g = $('f-group').value;
+      const inner = `<tr class="inner"><td colspan="8"><div class="scroll" style="max-width:520px;margin:10px 10px 10px 0"><table class="rank">${rankChart(D.ranks[e.id], e.scoring)}</table></div><div style="overflow-x:auto"><table><tr>${BOARD_HEAD}</tr>${boardsOf[e.id].map(b => boardRow(b, false).replace('class="board"', `class="board${g && b.g === g ? ' hit' : ''}"`)).join('')}</table></div></td></tr>`;
+      row.insertAdjacentHTML('afterend', inner);
+    } else row.nextElementSibling.remove();
+  } else if (row.classList.contains('board')) {
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('detail')) next.remove();
+    else row.insertAdjacentHTML('afterend', detail(D.boards[+row.dataset.i], row.children.length));
+  }
+}
+$('main').addEventListener('click', ev => { const row = ev.target.closest('tr.event, tr.board'); if (row) toggle(row); });
+$('main').addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { const row = ev.target.closest('tr.event, tr.board'); if (row && row === ev.target) { ev.preventDefault(); toggle(row); } } });
+for (const id of ['f-scoring', 'f-group', 'f-text', 'f-sort']) $(id).addEventListener('input', () => { shown = 200; render(); });
+$('more').addEventListener('click', () => { shown += 400; render(); });
+for (const v of ['events', 'boards']) $('view-' + v).addEventListener('click', () => { view = v; $('view-events').setAttribute('aria-pressed', v === 'events'); $('view-boards').setAttribute('aria-pressed', v === 'boards'); render(); });
+render();
+</script>

@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 import numpy as np
@@ -188,6 +189,77 @@ class BotBid:
 
         return False
     
+    def artificial_guard(self, auction, candidates):
+        """[sampling] artificial_guard = <cards>: drop a candidate that is not the network's first choice when
+        EPBot reads it as an artificial call and this hand is outside the suit lengths EPBot states for it by
+        that many cards in some suit (a 2D Cappelletti for both majors with a heart void). Partner reads such
+        a call as the convention, so the search's verdict on it is not to be trusted. The network's first
+        choice is never dropped, nor a call the auction model named for a purpose. Empty = off."""
+        limit = getattr(self.sampler, 'artificial_guard', None)
+        if not limit or len(candidates) < 2:
+            return candidates
+        try:
+            if self.bbabot is None:
+                return candidates
+            top = max(c.insta_score for c in candidates)
+            held = [len(s) for s in reversed(self.hand_str.split('.'))]      # EPBot's order: clubs first
+            kept = []
+            for c in candidates:
+                if c.insta_score < top and c.who != "AuctionModel" and c.bid not in ('PASS', 'X', 'XX'):
+                    _, artificial = self.bbabot.explain_last_bid(auction + [c.bid])
+                    if artificial:
+                        player = self.bbabot.players[self.bbabot.position]
+                        least = player.get_info_min_length(self.seat)
+                        most = player.get_info_max_length(self.seat)
+                        cards = max(max(int(least[k]) - held[k], held[k] - int(most[k]), 0) for k in range(4))
+                        if cards >= limit:
+                            if self.verbose:
+                                print(f"artificial_guard: {c.bid} dropped, hand {cards} cards outside its meaning")
+                            continue
+                kept.append(c)
+            return kept
+        except Exception as error:      # the guard is advice: on any failure the candidates stay as they were
+            sys.stderr.write(f"artificial_guard: {type(error).__name__}: {error}\n")
+            return candidates
+
+    _books = {}
+
+    def book_opening(self, auction, chosen):
+        """[sampling] book_opening = <folder of a morty-book edition's chapters>: in an opening position (only
+        passes so far), when the search chooses Pass and the book opens, make the book's opening instead.
+        Claim C0005 of the morty-book: on fresh deals the book's opening, Morty bidding on, beat Morty's pass
+        by +0.18 IMPs a position (SAYC and SEF) and +0.27 (GIB), mostly with its weak twos and preempts; A/B match
+        (Morty in all four seats, on those boards) +0.42 +-0.12 IMPs a board (SAYC and SEF) and +0.37 +-0.15 (GIB).
+        book_opening_levels = 2,3 keeps only openings at those levels. Returns the call, or None. Empty = off."""
+        path = getattr(self.sampler, 'book_opening', '')
+        if not path or chosen != 'PASS':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) > 3 or any(c != 'PASS' for c in calls):
+            return None
+        book = BotBid._books.get(path)
+        if book is None:
+            code = os.path.abspath(path)
+            while code != os.path.dirname(code) and not os.path.exists(os.path.join(code, 'compile_book.py')):
+                code = os.path.dirname(code)
+            if code not in sys.path:
+                sys.path.append(code)
+            import compile_book
+            import coverage
+            compile_book.TABLES = [(flag, name) for flag, name, _ in coverage.TABLES]
+            book = BotBid._books[path] = compile_book.CompiledBook(path)
+        we, they = self.vuln[self.seat % 2], self.vuln[(self.seat + 1) % 2]
+        vul = 'All' if we and they else 'NS' if we else 'EW' if they else 'None'
+        call, table, rule = book.bid(self.hand_str, ['P'] * len(calls), vul, 'MP' if self.models.matchpoint else 'IMP')
+        if not call or call == 'P':
+            return None
+        levels = getattr(self.sampler, 'book_opening_levels', None)
+        if levels and int(call[0]) not in levels:
+            return None
+        if self.verbose:
+            print(f"book_opening: Pass becomes {call} (rule {rule})")
+        return call
+
     def six_card_jump_to_two(self, auction, chosen):
         """[sampling] six_card_jump_to_two = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
         the jump to three of a lower-ranking suit becomes two of it (game forcing in 2/1) when this hand holds
@@ -245,6 +317,30 @@ class BotBid:
             print(f"five_card_two_over_one: 1N becomes 2{strains[five]} with {hcp} HCP")
         return '2' + strains[five]
 
+    def drury_to_raise(self, auction, chosen):
+        """[sampling] drury_to_raise = <HCP>: a passed hand over partner's 1H or 1S (third or fourth seat) and a
+        pass: the search's Drury 2C becomes the simple raise to two of the major when this hand holds exactly
+        three cards in the major and at most that many HCP. Found by the morty-book's second candidate search
+        (strong human players raise there; forced test +0.53 IMPs a position with 8-9 HCP). Returns the call
+        to make instead, or None. Empty = off."""
+        most = getattr(self.sampler, 'drury_to_raise', None)
+        if not most or chosen != '2C':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (4, 5) or calls[-1] != 'PASS' or calls[-2] not in ('1H', '1S'):
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        major = calls[-2][1]
+        if len(self.hand_str.split('.')['SHDC'.index(major)]) != 3:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if hcp > most:
+            return None
+        if self.verbose:
+            print(f"drury_to_raise: 2C becomes 2{major} with {hcp} HCP")
+        return '2' + major
+
     def second_call_2nt_to_3nt(self, auction, chosen):
         """[sampling] second_call_2nt_to_3nt = <HCP>: responder's second call in an auction the opponents have
         passed throughout (partner opened one of a suit, we responded, partner rebid): the invitational 2NT
@@ -268,6 +364,33 @@ class BotBid:
         if self.verbose:
             print(f"second_call_2nt_to_3nt: 2N becomes 3N with {hcp} HCP")
         return '3N'
+
+    def weak_two_diamonds_major(self, auction, chosen):
+        """[sampling] weak_two_diamonds_major = <HCP>: over partner's weak 2D and a pass, with no call of ours yet,
+        the 2NT ask becomes two of our five-card major (natural, forcing) when this hand holds exactly five
+        cards in one major, no other suit of five or more, and from that many HCP up to 18. Found by the
+        morty-book's third candidate search (SAYC's Morty bids the major; forced test +1.14 IMPs a position
+        with the Brill robots, +0.48 with Morty's network in the other seats). Returns the call to make
+        instead, or None. Empty = off."""
+        least = getattr(self.sampler, 'weak_two_diamonds_major', None)
+        if not least or chosen != '2N':
+            return None
+        calls = [c for c in auction if c != 'PAD_START']
+        if len(calls) not in (2, 3) or calls[-1] != 'PASS' or calls[-2] != '2D':
+            return None
+        if any(c != 'PASS' for c in calls[:-2]):
+            return None
+        lengths = [len(s) for s in self.hand_str.split('.')]
+        fives = [k for k, n in enumerate(lengths) if n >= 5]
+        if len(fives) != 1 or fives[0] not in (0, 1) or lengths[fives[0]] != 5:
+            return None
+        hcp = sum({'A': 4, 'K': 3, 'Q': 2, 'J': 1}.get(card, 0) for card in self.hand_str)
+        if not least <= hcp <= 18:
+            return None
+        major = 'SH'[fives[0]]
+        if self.verbose:
+            print(f"weak_two_diamonds_major: 2N becomes 2{major} with {hcp} HCP")
+        return '2' + major
 
     def get_min_candidate_score(self, bid_no):
         if isinstance(self.min_candidate_score, list):
@@ -321,6 +444,7 @@ class BotBid:
 
         self.my_bid_no = self.get_bid_number_for_player_to_bid(auction)
         candidates, passout = self.get_bid_candidates(auction)
+        candidates = self.artificial_guard(auction, candidates)
         quality = 1
         hands_np = None
         samples = []
@@ -926,9 +1050,12 @@ class BotBid:
             if self.verbose:
                 print("No rescue bid evaluated", auction, passout, candidates[0], quality, self.my_bid_no, candidates[0].who)
 
-        rule_bid = (self.six_card_jump_to_two(auction, candidates[0].bid)
+        rule_bid = (self.book_opening(auction, candidates[0].bid)
+                    or self.six_card_jump_to_two(auction, candidates[0].bid)
                     or self.five_card_two_over_one(auction, candidates[0].bid)
-                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid))
+                    or self.drury_to_raise(auction, candidates[0].bid)
+                    or self.second_call_2nt_to_3nt(auction, candidates[0].bid)
+                    or self.weak_two_diamonds_major(auction, candidates[0].bid))
         if rule_bid:
             candidates.insert(0, CandidateBid(bid=rule_bid, insta_score=-1, adjust=0, alert=False, who="Rule"))
             who = "Rule"

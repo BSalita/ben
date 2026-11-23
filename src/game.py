@@ -118,9 +118,15 @@ class AsyncCardPlayer(botcardplayer.CardPlayer):
     
 class Driver:
 
-    def __init__(self, models, factory, sampler, seed, ddsolver, verbose):
+    def __init__(self, models, factory, sampler, seed, ddsolver, verbose, models_ew=None, sampler_ew=None):
         self.models = models
         self.sampler = sampler
+        # Index 0 is North-South, 1 is East-West. Both sides play with the same
+        # configuration unless models_ew is given (A/B matches, scripts/match/ab_match.py).
+        self.models_by_side = [models, models if models_ew is None else models_ew]
+        self.sampler_by_side = [sampler, sampler if sampler_ew is None else sampler_ew]
+        self.bot_by_side = [None, None]
+        self.features_by_side = None
         self.factory = factory
         self.confirmer = factory.create_confirmer()
         self.channel = factory.create_channel()
@@ -219,6 +225,7 @@ class Driver:
         self.bid_responses = []
         self.card_responses = []
 
+        self.bot_by_side = [None, None]
         if self.play_only:
             self.bot = None
             for bid in self.auction:
@@ -253,24 +260,17 @@ class Driver:
 
         print('{1} Bidding took {0:0.1f} seconds.'.format(time.time() - t_start, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         
-        features = {}
-        aceking = {}
-        if self.models.use_bba_to_count_aces:
-            if self.bot is not None and self.bot.bbabot is not None:
-                aceking = self.bot.bbabot.find_aces(self.auction)
-                explanation, _, preempted = self.bot.bbabot.explain_auction(self.auction)
-                features["Explanation"] = explanation
-                features["preempted"] = preempted
-
-        features["aceking"] = aceking
-        
-        if self.verbose:
-            if self.bot is not None and self.bot.bbabot is not None:
-                self.bot.bbabot.get_sample(self.auction)
+        if self.models_by_side[1] is self.models_by_side[0]:
+            features = self.auction_features(self.models, self.bot)
+            self.features_by_side = [features, features]
+        else:
+            # Two configurations at the table: each side reads the auction with its own
+            self.features_by_side = [self.auction_features(self.models_by_side[side], self.bot_by_side[side]) for side in (0, 1)]
+            features = self.features_by_side[self.decl_i % 2]
 
         print("trick 1")
 
-        opening_lead52 = (await self.opening_lead(self.auction, aceking))
+        opening_lead52 = (await self.opening_lead(self.auction, self.features_by_side[(self.decl_i + 1) % 2]["aceking"]))
 
         if str(opening_lead52.card).startswith("Conceed"):
 
@@ -325,6 +325,25 @@ class Driver:
             'pbn': self.deal_str,
             'dict': self.to_dict()
         }))
+
+    def auction_features(self, models, bot):
+        # What BBA can tell the card play about the auction (aces shown, explanation)
+        features = {}
+        aceking = {}
+        if models.use_bba_to_count_aces:
+            if bot is not None and bot.bbabot is not None:
+                aceking = bot.bbabot.find_aces(self.auction)
+                explanation, _, preempted = bot.bbabot.explain_auction(self.auction)
+                features["Explanation"] = explanation
+                features["preempted"] = preempted
+
+        features["aceking"] = aceking
+
+        if self.verbose:
+            if bot is not None and bot.bbabot is not None:
+                bot.bbabot.get_sample(self.auction)
+
+        return features
 
     def pbn_header(self, event):
         pbn_str = ""
@@ -548,18 +567,28 @@ class Driver:
 
         pimc = [None, None, None, None]
 
+        # Card players are numbered from declarer's left (0 lefty, 1 dummy, 2 righty, 3 declarer).
+        # Each plays with the configuration of its side (the same one unless this is an A/B match).
+        decl_models, decl_sampler = self.models_by_side[decl_i % 2], self.sampler_by_side[decl_i % 2]
+        def_models, def_sampler = self.models_by_side[(decl_i + 1) % 2], self.sampler_by_side[(decl_i + 1) % 2]
+        player_models = [def_models, decl_models, def_models, decl_models]
+        player_sampler = [def_sampler, decl_sampler, def_sampler, decl_sampler]
+        if self.features_by_side is None:
+            self.features_by_side = [features, features]
+        player_features = [self.features_by_side[(decl_i + 1 + i) % 2] for i in range(4)]
+
         # ACE takes priority over PIMC
-        if getattr(self.models, 'ace_use_declaring', False):
+        if getattr(decl_models, 'ace_use_declaring', False):
             from ace.ACE import ACEDLL
-            declarer = ACEDLL(self.models, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, self.verbose)
+            declarer = ACEDLL(decl_models, dummy_hand, decl_hand, contract, is_decl_vuln, decl_sampler, self.verbose)
             pimc[1] = declarer
             pimc[3] = declarer
             if self.verbose:
                 print("ACE (declarer)",dummy_hand, decl_hand, contract)
-        elif self.models.pimc_use_declaring:
+        elif decl_models.pimc_use_declaring:
             # No PIMC for dummy, we want declarer to play both hands
             from pimc.PIMC import BGADLL
-            declarer = BGADLL(self.models, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, self.verbose)
+            declarer = BGADLL(decl_models, dummy_hand, decl_hand, contract, is_decl_vuln, decl_sampler, self.verbose)
             pimc[1] = declarer
             pimc[3] = declarer
             if self.verbose:
@@ -568,16 +597,16 @@ class Driver:
             pimc[1] = None
             pimc[3] = None
 
-        if getattr(self.models, 'ace_use_defending', False):
+        if getattr(def_models, 'ace_use_defending', False):
             from ace.ACEDef import ACEDefDLL
-            pimc[0] = ACEDefDLL(self.models, dummy_hand, lefty_hand, contract, is_decl_vuln, 0, self.sampler, self.verbose)
-            pimc[2] = ACEDefDLL(self.models, dummy_hand, righty_hand, contract, is_decl_vuln, 2, self.sampler, self.verbose)
+            pimc[0] = ACEDefDLL(def_models, dummy_hand, lefty_hand, contract, is_decl_vuln, 0, def_sampler, self.verbose)
+            pimc[2] = ACEDefDLL(def_models, dummy_hand, righty_hand, contract, is_decl_vuln, 2, def_sampler, self.verbose)
             if self.verbose:
                 print("ACE (defender)",dummy_hand, lefty_hand, righty_hand, contract)
-        elif self.models.pimc_use_defending:
+        elif def_models.pimc_use_defending:
             from pimc.PIMCDef import BGADefDLL
-            pimc[0] = BGADefDLL(self.models, dummy_hand, lefty_hand, contract, is_decl_vuln, 0, self.sampler, self.verbose)
-            pimc[2] = BGADefDLL(self.models, dummy_hand, righty_hand, contract, is_decl_vuln, 2, self.sampler, self.verbose)
+            pimc[0] = BGADefDLL(def_models, dummy_hand, lefty_hand, contract, is_decl_vuln, 0, def_sampler, self.verbose)
+            pimc[2] = BGADefDLL(def_models, dummy_hand, righty_hand, contract, is_decl_vuln, 2, def_sampler, self.verbose)
             if self.verbose:
                 print("PIMC",dummy_hand, lefty_hand, righty_hand, contract)
         else:
@@ -585,10 +614,10 @@ class Driver:
             pimc[2] = None
 
         card_players = [
-            AsyncCardPlayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[0], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, pimc[1], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[2], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[3], self.dds, self.verbose)
+            AsyncCardPlayer(def_models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln, def_sampler, pimc[0], self.dds, self.verbose),
+            AsyncCardPlayer(decl_models, 1, dummy_hand, decl_hand, contract, is_decl_vuln, decl_sampler, pimc[1], self.dds, self.verbose),
+            AsyncCardPlayer(def_models, 2, righty_hand, dummy_hand, contract, is_decl_vuln, def_sampler, pimc[2], self.dds, self.verbose),
+            AsyncCardPlayer(decl_models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, decl_sampler, pimc[3], self.dds, self.verbose)
         ]
 
         # check if user is playing and update card players accordingly
@@ -610,7 +639,9 @@ class Driver:
         claimer = Claimer(self.verbose, self.dds)
 
         # Clear sample cache at start of new hand
-        self.sampler.clear_sample_cache()
+        decl_sampler.clear_sample_cache()
+        if def_sampler is not decl_sampler:
+            def_sampler.clear_sample_cache()
 
         player_cards_played = [[] for _ in range(4)]
         player_cards_played52 = [[] for _ in range(4)]
@@ -652,7 +683,7 @@ class Driver:
                     print('play status', play_status)
 
                 if isinstance(card_players[player_i], botcardplayer.CardPlayer):
-                    if play_status == "Forced" and self.models.autoplaysingleton:
+                    if play_status == "Forced" and player_models[player_i].autoplaysingleton:
                         card = get_singleton(card_players[player_i].hand52,current_trick52)
                         card_resp = CardResp(
                             card=Card.from_code(card),
@@ -686,7 +717,7 @@ class Driver:
                 if card_resp == None:    
                     if isinstance(card_players[player_i], botcardplayer.CardPlayer):
                         played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
-                        rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = self.sampler.init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, features["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [self.vuln_ns, self.vuln_ew], self.models, card_players[player_i].get_random_generator())
+                        rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = player_sampler[player_i].init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, player_features[player_i]["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [self.vuln_ns, self.vuln_ew], player_models[player_i], card_players[player_i].get_random_generator())
                         assert rollout_states[0].shape[0] > 0, "No samples for DDSolver"
                         card_players[player_i].check_pimc_constraints(trick_i, rollout_states, quality)
                     else: 
@@ -705,7 +736,7 @@ class Driver:
                     await asyncio.sleep(0.01)
 
                     while card_resp is None:
-                        card_resp =  await card_players[player_i].async_play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features)
+                        card_resp =  await card_players[player_i].async_play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, player_features[player_i])
 
                         if (str(card_resp.card).startswith("Conceed")) :
                                 self.claimedbydeclarer = (player_i == 3) or (player_i == 1)
@@ -804,7 +835,7 @@ class Driver:
             tricks.append(current_trick)
             tricks52.append(current_trick52)
 
-            if self.models.pimc_use_declaring or self.models.pimc_use_defending:
+            if decl_models.pimc_use_declaring or def_models.pimc_use_defending:
                 for card_player in card_players:
                     if isinstance(card_player, botcardplayer.CardPlayer) and card_player.pimc:
                         card_player.pimc.reset_trick()
@@ -849,7 +880,7 @@ class Driver:
             if trick_winner % 2 == 0:
                 card_players[0].n_tricks_taken += 1
                 card_players[2].n_tricks_taken += 1
-                if self.models.pimc_use_defending:
+                if def_models.pimc_use_defending:
                     if isinstance(card_players[0], botcardplayer.CardPlayer) and card_players[0].pimc:
                         card_players[0].pimc.update_trick_needed()
                     if isinstance(card_players[2], botcardplayer.CardPlayer) and card_players[2].pimc:
@@ -857,7 +888,7 @@ class Driver:
             else:
                 card_players[1].n_tricks_taken += 1
                 card_players[3].n_tricks_taken += 1
-                if self.models.pimc_use_declaring:
+                if decl_models.pimc_use_declaring:
                     if isinstance(card_players[3], botcardplayer.CardPlayer) and card_players[3].pimc :
                         card_players[3].pimc.update_trick_needed()
 
@@ -958,10 +989,10 @@ class Driver:
                 print(f"{Fore.LIGHTCYAN_EX}{card_resp.card} selected by human{Fore.RESET}")
         else:
             bot_lead = AsyncBotLead(
-                [self.vuln_ns, self.vuln_ew], 
-                hands_str[(decl_i + 1) % 4], 
-                self.models,
-                self.sampler,
+                [self.vuln_ns, self.vuln_ew],
+                hands_str[(decl_i + 1) % 4],
+                self.models_by_side[(decl_i + 1) % 2],
+                self.sampler_by_side[(decl_i + 1) % 2],
                 (decl_i + 1) % 4,
                 self.dealer_i,
                 self.dds,
@@ -982,11 +1013,12 @@ class Driver:
         hint_bots = [None, None, None, None]
         for i, level in enumerate(self.human):
             if level == 1:
-                hint_bots[i] = AsyncBotBid(vuln, hands_str[i], self.models, self.sampler, i, self.dealer_i, self.dds, False, self.verbose)
+                hint_bots[i] = AsyncBotBid(vuln, hands_str[i], self.models_by_side[i % 2], self.sampler_by_side[i % 2], i, self.dealer_i, self.dds, False, self.verbose)
                 players.append(self.factory.create_human_bidder(vuln, hands_str[i], self.name, hint_bots[i]))
                 self.bot = None
             else:
-                self.bot = AsyncBotBid(vuln, hands_str[i], self.models, self.sampler, i, self.dealer_i, self.dds, False, self.verbose)
+                self.bot = AsyncBotBid(vuln, hands_str[i], self.models_by_side[i % 2], self.sampler_by_side[i % 2], i, self.dealer_i, self.dds, False, self.verbose)
+                self.bot_by_side[i % 2] = self.bot
                 players.append(self.bot)
 
         if self.models.use_bba or self.models.use_bba_to_count_aces or self.models.consult_bba or self.models.use_bba_rollout:

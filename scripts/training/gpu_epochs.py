@@ -1,4 +1,4 @@
-"""Training epochs with the data on the GPU, for the bidding and bidding-info trainers.
+"""Training epochs with the data on the GPU, for the bidding, bidding-info and card-play trainers.
 
 model.fit() with a generator spends most of a step outside the GPU: one program launch and one
 batch transfer per step (about 6 ms per step on an RTX 5080, GPU under 40% busy). Here the whole
@@ -107,8 +107,6 @@ def fit(model, inputs, targets, batch_size, epochs, steps_per_epoch, callbacks=(
     """
     static, bids = inputs
     n_examples, n_rounds, _ = bids.shape
-    steps_per_call = next((k for k in sorted(range(128, 1025), key=lambda k: abs(k - steps_per_call))
-                           if steps_per_epoch % k == 0), steps_per_call)
     single_target = not isinstance(targets, (tuple, list))
     targets = (targets,) if single_target else tuple(targets)
 
@@ -132,6 +130,24 @@ def fit(model, inputs, targets, batch_size, epochs, steps_per_epoch, callbacks=(
         if repeat_targets:
             y = tuple(tf.repeat(t[:, None, :], n_rounds, axis=1) for t in y)
         return x, (y[0] if single_target else y)
+
+    return fit_batches(model, batch, n_examples, batch_size, epochs, steps_per_epoch, callbacks=callbacks,
+                       steps_per_call=steps_per_call, t_start=t_start)
+
+
+def fit_batches(model, batch, n_examples, batch_size, epochs, steps_per_epoch, callbacks=(), steps_per_call=512,
+                validation=None, initial_epoch=0, t_start=None):
+    """The training loop of fit(), for any data held on the GPU.
+
+    batch(idx) returns (x, y) for a tensor of batch_size example indexes, built from tensors
+    that are already on the GPU. validation, when given, is called after every epoch and
+    returns a dict of logs (val_loss and so on) that the callbacks get together with the
+    training logs, as from model.fit(validation_data=...). Epochs are numbered from
+    initial_epoch.
+    """
+    t_start = t_start or time.time()
+    steps_per_call = next((k for k in sorted(range(128, 1025), key=lambda k: abs(k - steps_per_call))
+                           if steps_per_epoch % k == 0), steps_per_call)
 
     # Create the loss, metric and optimizer variables before the compiled loop is traced
     x0, y0 = batch(tf.range(batch_size))
@@ -157,7 +173,7 @@ def fit(model, inputs, targets, batch_size, epochs, steps_per_epoch, callbacks=(
     model.stop_training = False
     cbs.on_train_begin()
     logs = {}
-    for epoch in range(epochs):
+    for epoch in range(initial_epoch, epochs):
         print(f"Epoch {epoch + 1}/{epochs}", flush=True)
         cbs.on_epoch_begin(epoch)
         model.reset_metrics()
@@ -183,8 +199,78 @@ def fit(model, inputs, targets, batch_size, epochs, steps_per_epoch, callbacks=(
                 elapsed = time.time() - t_epoch
                 print(f"{done}/{steps_per_epoch} - {elapsed:.0f}s {1000 * elapsed / done:.2f}ms/step - "
                       + " - ".join(f"{k}: {v:.4f}" for k, v in sorted(logs.items())), flush=True)
+        if validation is not None:
+            val_logs = {k: float(v) for k, v in validation().items()}
+            print(" - ".join(f"{k}: {v:.4f}" for k, v in sorted(val_logs.items())), flush=True)
+            logs = {**logs, **val_logs}
         cbs.on_epoch_end(epoch, logs)
         if model.stop_training:
             break
     cbs.on_train_end(logs)
     return logs
+
+
+def compact_play(x, n_cards=32, first_card=64, n_card_blocks=7, chunk=20_000, threads=16):
+    """x: (deals, tricks, features) float16 input of the card-play networks: whole numbers,
+    with n_card_blocks one-hot encoded cards from feature first_card on.
+
+    Returns (before, cards, after): the features before and after the card blocks as uint8,
+    and cards (deals, tricks, n_card_blocks) uint8 with the index of each card (n_cards for an
+    all-zero block). Returns None when x cannot be stored that way without loss.
+    """
+    n, n_tricks, n_ftrs = x.shape
+    last_card = first_card + n_card_blocks * n_cards
+    if x.dtype != np.float16 or n_ftrs < last_card:
+        return None
+    before = np.empty((n, n_tricks, first_card), dtype=np.uint8)
+    cards = np.empty((n, n_tricks, n_card_blocks), dtype=np.uint8)
+    after = np.empty((n, n_tricks, n_ftrs - last_card), dtype=np.uint8)
+
+    def do(a):
+        c = np.asarray(x[a:a + chunk])
+        m = len(c)
+        if not ((c >= 0) & (c <= 255)).all():     # also false for NaN
+            return False
+        small = c.astype(np.uint8)
+        if not (small == c).all():
+            return False
+        blocks = small[:, :, first_card:last_card].reshape(m, n_tricks, n_card_blocks, n_cards)
+        if blocks.max() > 1 or blocks.sum(axis=-1).max() > 1:
+            return False
+        before[a:a + m] = small[:, :, :first_card]
+        cards[a:a + m] = np.where(blocks.any(axis=-1), blocks.argmax(axis=-1), n_cards)
+        after[a:a + m] = small[:, :, last_card:]
+        return True
+
+    with ThreadPoolExecutor(threads) as pool:
+        if not all(pool.map(do, range(0, n, chunk))):
+            return None
+    return before, cards, after
+
+
+def expand_play(before, cards, after, n_cards=32):
+    """The inverse of compact_play, in numpy (for checks)."""
+    n, n_tricks, n_blocks = cards.shape
+    one_hot = np.concatenate([np.eye(n_cards, dtype=np.float16), np.zeros((1, n_cards), np.float16)])[cards]
+    return np.concatenate([before.astype(np.float16), one_hot.reshape(n, n_tricks, n_blocks * n_cards),
+                           after.astype(np.float16)], axis=2)
+
+
+def compact_card_targets(y, chunk=50_000, threads=16):
+    """y: (deals, tricks, cards) with one card per trick, or none. Returns the card indexes
+    (deals, tricks) uint8, with the number of cards for a trick without one, or None when some
+    row is not of that form."""
+    n_cards = y.shape[-1]
+    idx = np.empty(y.shape[:-1], dtype=np.uint8)
+
+    def do(a):
+        c = np.asarray(y[a:a + chunk])
+        if not (((c == 0) | (c == 1)).all() and (c.sum(axis=-1, dtype=np.float32) <= 1).all()):
+            return False
+        idx[a:a + chunk] = np.where(c.any(axis=-1), c.argmax(axis=-1), n_cards)
+        return True
+
+    with ThreadPoolExecutor(threads) as pool:
+        if not all(pool.map(do, range(0, len(y), chunk))):
+            return None
+    return idx

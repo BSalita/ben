@@ -177,10 +177,20 @@ class Sample:
         # disclosure_calibration = <file>: the explanation the REST API sends has its numbers widened to what our
         # calls show in practice (src/disclosure.py; the file is fitted with the disclosure-audit tool; empty = off)
         sample.disclosure_calibration = conf.get('sampling', 'disclosure_calibration', fallback='').strip()
+        # artificial_guard = <cards>: a search candidate other than the network's first choice is dropped when
+        # EPBot reads it as artificial and our hand is that many cards outside its stated lengths (empty = off)
+        guard = conf.get('sampling', 'artificial_guard', fallback='').strip()
+        sample.artificial_guard = int(guard) if guard else None
         # six_card_jump_to_two = <HCP>: over partner's 1H/1S and a pass, the jump to three of a lower suit becomes
         # the game-forcing two of it with six cards in the suit and at least that many HCP (empty = off)
         jump = conf.get('sampling', 'six_card_jump_to_two', fallback='').strip()
         sample.six_card_jump_to_two = int(jump) if jump else None
+        # book_opening = <folder of a morty-book edition's chapters>: in an opening position, when the search
+        # passes and the book opens, make the book's opening (claim C0005); book_opening_levels = 2,3 keeps only
+        # openings at those levels (empty = off)
+        sample.book_opening = conf.get('sampling', 'book_opening', fallback='').strip()
+        levels = conf.get('sampling', 'book_opening_levels', fallback='').strip()
+        sample.book_opening_levels = {int(x) for x in levels.split(',') if x.strip()} or None
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()
@@ -189,6 +199,14 @@ class Sample:
         # five-card lower suit (no six-card suit, two cards or fewer in partner's major) with that many HCP
         five = conf.get('sampling', 'five_card_two_over_one', fallback='').strip()
         sample.five_card_two_over_one = int(five) if five else None
+        # drury_to_raise = <HCP>: a passed hand's Drury 2C over partner's 1H/1S becomes the raise to two with exactly
+        # three trumps and at most that many HCP (empty = off)
+        dr = conf.get('sampling', 'drury_to_raise', fallback='').strip()
+        sample.drury_to_raise = int(dr) if dr else None
+        # weak_two_diamonds_major = <HCP>: over partner's weak 2D and a pass, the 2NT ask becomes two of our one
+        # five-card major with that many HCP up to 18 (empty = off)
+        w2 = conf.get('sampling', 'weak_two_diamonds_major', fallback='').strip()
+        sample.weak_two_diamonds_major = int(w2) if w2 else None
         # measurement only: a Brill field file; the search is handed the real deal as every sample
         sample.test_true_deal_file = conf.get('sampling', 'test_true_deal_file', fallback='').strip()
         return sample

@@ -1,0 +1,65 @@
+# Rebuild the Brill board table of one replayed model (see data\brill-replay\README.md).
+#
+#   powershell -File ben\scripts\match\brill\rebuild_board_table.ps1 [-Model old] [-Name GIB-BBO-8730-base] [-WaitForPid 1234] [-Publish]
+#
+# Steps, each skipping what is already saved:
+#   1. Brill's autoplay of the boards whose contract the Brill entrant did not play
+#   2. single-dummy probabilities of new deals
+#   3. brill_views.py: every view's board table and page (the main page as played,
+#      Morty AI's real tables, and each replayed model of data\brill-replay\models.json
+#      on every event) and the store data\brill-replay\results\board-results.parquet
+# -Publish     then put leader-board.html on the web server (the ops folder's
+#              publish_brill_leaderboard.ps1, which is not part of this repository)
+# -WaitForPid  first wait for a running brill_autoplay.py to end (two must not
+#              run at once: the Brill service gets one request at a time).
+param(
+    [string]$Model = "old",
+    [string]$Name = "GIB-BBO-8730-base",
+    [int]$WaitForPid = 0,
+    [switch]$Publish
+)
+$ErrorActionPreference = "Stop"
+$src = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path
+$python = Join-Path $src "elo\.venv\Scripts\python.exe"
+$scripts = Join-Path $src "ben\scripts\match\brill"
+$data = Join-Path $src "data\brill-replay"
+$out = Join-Path $data "board-table"
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUNBUFFERED = "1"
+Set-Location $src
+
+function Step([string]$What, [string[]]$Arguments) {
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $What"
+    & $python @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$What failed with exit code $LASTEXITCODE" }
+}
+
+Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') start"
+if ($WaitForPid) {
+    Write-Host "waiting for process $WaitForPid ..."
+    Wait-Process -Id $WaitForPid -ErrorAction SilentlyContinue
+}
+# A failed autoplay does not stop the rebuild: every result it got is saved, the boards without
+# one keep their double-dummy result, and new events must still reach the page. The failure is
+# reported at the end.
+$autoplayError = $null
+try {
+    Step "Brill autoplay" @("$scripts\brill_autoplay.py", "$data\field.jsonl", "$data\runs\$Model.jsonl", "$data\autoplay\$Model.jsonl")
+} catch {
+    $autoplayError = $_.Exception.Message
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $autoplayError; rebuilding with the results so far"
+}
+Step "single-dummy probabilities" @("$scripts\brill_sd_probs.py", "$data\field.jsonl", "$out\sd.json", "--workers", "16")
+# the model's name in the list of replayed models (data\brill-replay\models.json), then every view and page
+Step "register $Model" @("$scripts\brill_views.py", $data, "register", $Model, "--name", $Name)
+Step "views and pages" @("$scripts\brill_views.py", $data, "build")
+if ($Publish) {
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') publish"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $src "ops\publish_brill_leaderboard.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "publish failed with exit code $LASTEXITCODE" }
+}
+Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') end"
+if ($autoplayError) {
+    $done = if ($Publish) { "rebuilt and published" } else { "rebuilt" }
+    throw "$autoplayError (the page was still $done; boards left are tried again next run)"
+}
