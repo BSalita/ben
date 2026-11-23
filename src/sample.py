@@ -191,6 +191,13 @@ class Sample:
         sample.book_opening = conf.get('sampling', 'book_opening', fallback='').strip()
         levels = conf.get('sampling', 'book_opening_levels', fallback='').strip()
         sample.book_opening_levels = {int(x) for x in levels.split(',') if x.strip()} or None
+        # book_turns = <folder of a morty-book edition's chapters>, book_turns_trust = <its trust table>: the book
+        # answers whole turns where its row and margin are trusted (book_turns_p, lower bound of "book = Morty")
+        # and Morty's search ran on at most book_turns_search_max of the trust run's turns (empty = off)
+        sample.book_turns = conf.get('sampling', 'book_turns', fallback='').strip()
+        sample.book_turns_trust = conf.get('sampling', 'book_turns_trust', fallback='').strip()
+        sample.book_turns_p = conf.getfloat('sampling', 'book_turns_p', fallback=0.99)
+        sample.book_turns_search_max = conf.getfloat('sampling', 'book_turns_search_max', fallback=0.05)
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()

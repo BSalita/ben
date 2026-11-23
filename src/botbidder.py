@@ -260,6 +260,55 @@ class BotBid:
             print(f"book_opening: Pass becomes {call} (rule {rule})")
         return call
 
+    @staticmethod
+    def load_book(path):
+        """The compiled morty-book edition at `path` (its chapters folder), loaded once a process."""
+        book = BotBid._books.get(path)
+        if book is None:
+            code = os.path.abspath(path)
+            while code != os.path.dirname(code) and not os.path.exists(os.path.join(code, 'compile_book.py')):
+                code = os.path.dirname(code)
+            if code not in sys.path:
+                sys.path.append(code)
+            import compile_book
+            import coverage
+            compile_book.TABLES = [(flag, name) for flag, name, _ in coverage.TABLES]
+            book = BotBid._books[path] = compile_book.CompiledBook(path)
+        return book
+
+    _trusts = {}
+
+    def book_turn(self, auction):
+        """[sampling] book_turns = <chapters folder of a morty-book edition>, book_turns_trust = <its trust table,
+        trust.py build>: the book answers the whole turn, before the network and the search, where its row and
+        margin made Morty's call on at least book_turns_p of the trust run's turns (95% lower bound) and Morty's
+        search ran on at most book_turns_search_max of them (0.05: the safe gate of audit/fast-bidder.md; 1: any
+        row). Returns the call, or None. Empty = off."""
+        path = getattr(self.sampler, 'book_turns', '')
+        if not path:
+            return None
+        trust = BotBid._trusts.get(self.sampler.book_turns_trust)
+        if trust is None:
+            import json
+            with open(self.sampler.book_turns_trust) as f:
+                trust = BotBid._trusts[self.sampler.book_turns_trust] = json.load(f)['rows']
+        book = BotBid.load_book(path)
+        we, they = self.vuln[self.seat % 2], self.vuln[(self.seat + 1) % 2]
+        vul = 'All' if we and they else 'NS' if we else 'EW' if they else 'None'
+        calls = ['P' if c == 'PASS' else c for c in auction if c != 'PAD_START']
+        call, table, number, margin = book.bid_margin(self.hand_str, calls, vul, 'MP' if self.models.matchpoint else 'IMP')
+        if call is None:
+            return None
+        t = trust.get(f'{table}:{number}:{margin}')
+        if t is None or t['low'] < self.sampler.book_turns_p or t['search'] > self.sampler.book_turns_search_max:
+            return None
+        call = 'PASS' if call == 'P' else call
+        if call not in bidding.BID2ID or not bidding.can_bid(call, auction):
+            return None
+        if self.verbose:
+            print(f"book_turns: {call} (table {table}, rule {number}, margin {margin}, trust {t['low']})")
+        return call
+
     def six_card_jump_to_two(self, auction, chosen):
         """[sampling] six_card_jump_to_two = <HCP>: after partner's 1H or 1S and a pass, with no call of ours yet,
         the jump to three of a lower-ranking suit becomes two of it (game forcing in 2/1) when this hand holds
@@ -443,6 +492,16 @@ class BotBid:
         self.rng = self.get_random_generator()
 
         self.my_bid_no = self.get_bid_number_for_player_to_bid(auction)
+        book_call = self.book_turn(auction)
+        if book_call:
+            n_steps = binary.calculate_step_bidding_info(auction)
+            p_hcp, p_shp = self.sampler.get_bidding_info(n_steps, auction, self.seat, self.hand_bidding, self.vuln, self.models)
+            candidate = CandidateBid(bid=book_call, insta_score=-1, adjust=0, alert=False, who="Book")
+            explain, alert = None, False
+            if self.models.consult_bba:
+                explain, alert = self.explain(auction + [book_call])
+            return BidResp(bid=book_call, candidates=[candidate], samples=[], shape=p_shp[0], hcp=p_hcp[0], who="Book",
+                           quality=1, alert=bool(alert), explanation=explain)
         candidates, passout = self.get_bid_candidates(auction)
         candidates = self.artificial_guard(auction, candidates)
         quality = 1
