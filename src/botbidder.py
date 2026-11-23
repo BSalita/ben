@@ -230,9 +230,14 @@ class BotBid:
         Claim C0005 of the morty-book: on fresh deals the book's opening, Morty bidding on, beat Morty's pass
         by +0.18 IMPs a position (SAYC and SEF) and +0.27 (GIB), mostly with its weak twos and preempts; A/B match
         (Morty in all four seats, on those boards) +0.42 +-0.12 IMPs a board (SAYC and SEF) and +0.37 +-0.15 (GIB).
-        book_opening_levels = 2,3 keeps only openings at those levels. Returns the call, or None. Empty = off."""
+        book_opening_levels = 2,3 keeps only openings at those levels. book_opening_system = <name> keeps it to
+        requests that play that system of config/systems.conf or name none (the server's own bidder): a book is
+        one system's. Returns the call, or None. Empty = off."""
         path = getattr(self.sampler, 'book_opening', '')
         if not path or chosen != 'PASS':
+            return None
+        only = getattr(self.sampler, 'book_opening_system', '')
+        if only and getattr(self.models, 'our_system', None) not in (None, only.upper()):
             return None
         calls = [c for c in auction if c != 'PAD_START']
         if len(calls) > 3 or any(c != 'PASS' for c in calls):

@@ -191,6 +191,8 @@ class Sample:
         sample.book_opening = conf.get('sampling', 'book_opening', fallback='').strip()
         levels = conf.get('sampling', 'book_opening_levels', fallback='').strip()
         sample.book_opening_levels = {int(x) for x in levels.split(',') if x.strip()} or None
+        # book_opening_system = <name in config/systems.conf>: only requests that play that system, or name none
+        sample.book_opening_system = conf.get('sampling', 'book_opening_system', fallback='').strip()
         # second_call_2nt_to_3nt = <HCP>: responder's second call, opponents silent: 2NT becomes 3NT with at
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()

@@ -145,6 +145,7 @@ class Systems:
 
         if requested["ourSystem"]:
             system = self._system("ourSystem", requested["ourSystem"], must_play=True)
+            request_models.our_system = system.name      # settings that belong to one system look at it (book_opening_system)
             request_models.bidder_model = system.bidder_model
             request_models.partner_model = system.reader_model
             request_models.binfo_model = system.reader_info_model
