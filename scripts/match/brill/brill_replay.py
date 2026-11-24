@@ -131,7 +131,8 @@ def replay(board):
     def south(calls):
         k = '-'.join(calls)
         if k not in south_calls:
-            south_calls[k] = call_of(W['models'], W['conf'], 2, calls)
+            hook = W.get('south_call')       # another South bidder (book_south_replay.py)
+            south_calls[k] = hook(board, hands[2], calls) if hook else call_of(W['models'], W['conf'], 2, calls)
         return south_calls[k]
 
     walk, status, off_at = [], 'record', None
