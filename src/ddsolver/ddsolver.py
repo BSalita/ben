@@ -1,3 +1,4 @@
+import ctypes
 import sys
 import os
 import threading
@@ -118,6 +119,86 @@ def _thread_context():
     return ctx
 
 
+class _CLibrarySolver:
+    """Card play's solves through a shared library with DDS's C API (SolveBoardPBN), for example
+    bridge-solver-cpp's libdds.so / dds.dll. Chosen with the environment variable BEN_DDS_LIBRARY
+    (path of the library); without it BEN uses dds3. Only solve_board_pbn goes through it: par and
+    DD tables stay on dds3. ctypes releases the GIL during the call, so the thread pool runs the
+    solves in parallel as with dds3; the library must be thread-safe (DDS's API allows calls from
+    several threads at once)."""
+
+    class _DealPBN(ctypes.Structure):
+        _fields_ = [("trump", ctypes.c_int), ("first", ctypes.c_int),
+                    ("currentTrickSuit", ctypes.c_int * 3), ("currentTrickRank", ctypes.c_int * 3),
+                    ("remainCards", ctypes.c_char * 80)]
+
+    class _FutureTricks(ctypes.Structure):
+        _fields_ = [("nodes", ctypes.c_int), ("cards", ctypes.c_int), ("suit", ctypes.c_int * 13),
+                    ("rank", ctypes.c_int * 13), ("equals", ctypes.c_int * 13), ("score", ctypes.c_int * 13)]
+
+    def __init__(self, path):
+        loader = ctypes.WinDLL if sys.platform == "win32" else ctypes.CDLL
+        self.path = path
+        self.lib = loader(path)
+        self.lib.SolveBoardPBN.argtypes = [self._DealPBN, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                           ctypes.POINTER(self._FutureTricks), ctypes.c_int]
+        self.lib.SolveBoardPBN.restype = ctypes.c_int
+        if hasattr(self.lib, "SetMaxThreads"):
+            self.lib.SetMaxThreads(0)
+        info = ""
+        if hasattr(self.lib, "GetDDSInfo"):
+            # DDSInfo: ints then char systemString[1024]; only the text is read
+            buf = ctypes.create_string_buffer(4096)
+            try:
+                self.lib.GetDDSInfo(buf)
+                info = buf.raw.decode("latin-1", "replace")
+            except Exception:
+                info = ""
+        self.info = " ".join(info.replace("\x00", " ").split())[-200:]
+
+    def solve_board_pbn(self, pbn, trump, first, current_trick_suit, current_trick_rank, target,
+                        solutions, mode, context=None):
+        dl = self._DealPBN()
+        dl.trump = trump
+        dl.first = first
+        for i in range(3):
+            dl.currentTrickSuit[i] = current_trick_suit[i]
+            dl.currentTrickRank[i] = current_trick_rank[i]
+        dl.remainCards = pbn.encode("ascii")
+        fut = self._FutureTricks()
+        ret = self.lib.SolveBoardPBN(dl, target, solutions, mode, ctypes.byref(fut), 0)
+        if ret != 1:
+            raise RuntimeError(f"SolveBoardPBN returned {ret} ({self.path})")
+        n = fut.cards
+        return {"cards": n, "suit": list(fut.suit[:n]), "rank": list(fut.rank[:n]),
+                "equals": list(fut.equals[:n]), "score": list(fut.score[:n])}
+
+
+_DDS_LIBRARY = os.getenv("BEN_DDS_LIBRARY")
+_clib = _CLibrarySolver(_DDS_LIBRARY) if _DDS_LIBRARY else None
+
+# Card play chooses among cards that score exactly the same by their place in the solver's list (the
+# last key of the candidate sorts in botcardplayer.py), and solvers list equal cards in different
+# orders. BEN_EQUAL_CARDS fixes that order, so the choice no longer depends on the solver:
+#   lowest  - in each suit the lowest card first (suits in the order spades, hearts, diamonds, clubs),
+#             so the lowest of equal cards is played
+#   highest - the highest card first
+# Unset: the solver's own order (BEN's behaviour until now).
+_EQUAL_CARDS = (os.getenv("BEN_EQUAL_CARDS") or "").lower() or None
+if _EQUAL_CARDS not in (None, "lowest", "highest"):
+    raise ValueError(f"BEN_EQUAL_CARDS must be lowest or highest, not {_EQUAL_CARDS!r}")
+
+
+def _fixed_card_order(card_results):
+    """card_results (card code -> per-sample scores) in the BEN_EQUAL_CARDS order. Card code =
+    suit * 13 + rank index, rank index 0 = ace."""
+    if _EQUAL_CARDS is None:
+        return card_results
+    low_first = _EQUAL_CARDS == "lowest"
+    order = sorted(card_results, key=lambda c: (c // 13, -(c % 13) if low_first else c % 13))
+    return {c: card_results[c] for c in order}
+
+
 class DDSolver:
 
     # Default for dds_mode changed to 1
@@ -146,7 +227,8 @@ class DDSolver:
                               threads=workers)
 
     def version(self):
-        return "3.1.0"
+        # the solver of card play's solves: dds3 unless BEN_DDS_LIBRARY names a library
+        return "3.1.0" if _clib is None else f"library {_clib.path} {_clib.info}".strip()
 
     def calculatepar(self, hand, vuln, print_result=True):
         with ModelTimer.time_call('dds_par'):
@@ -240,7 +322,13 @@ class DDSolver:
 
         # Solve each board on the thread pool. solve_board_pbn releases the GIL
         # during the DDS search; each pool thread uses its own SolverContext.
+        # With BEN_DDS_LIBRARY set, the same solves go through that library instead (_CLibrarySolver).
+        def _solve_one_clib(pbn):
+            return _clib.solve_board_pbn(pbn, trump, leader_i, trick_suit, trick_rank, -1, solutions, dds_mode)
+
         def _solve_one(pbn):
+            if _clib is not None:
+                return _solve_one_clib(pbn)
             return dds3.solve_board_pbn(
                 pbn,
                 trump=trump,
@@ -285,7 +373,7 @@ class DDSolver:
                                 card_results[eq_card] = []
                             card_results[eq_card].append(fut["score"][i])
 
-        return card_results
+        return card_results if solutions == 1 else _fixed_card_order(card_results)
 
 
     def expected_tricks_dds(self, card_results):
