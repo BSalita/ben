@@ -1201,6 +1201,9 @@ def bid():
             if "hcp" in result: del result["hcp"]
         else:
             result["explanations"] = explanations
+            if getattr(bid, "evidence", None):
+                # every sample the search scored, and each candidate's score and final contract on it (for explanations)
+                result["evidence"] = bid.evidence
 
         # Add explanation for the recommended bid
         try:

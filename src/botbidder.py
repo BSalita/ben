@@ -466,6 +466,7 @@ class BotBid:
         quality = 1
         hands_np = None
         samples = []
+        search_evidence = {}        # call -> (score on each sample, final contract on each sample): for explanations
 
         # If no search we will not generate any samples if switch of
         # if only 1 sample we drop sampling, but only if no rescue bidding
@@ -523,6 +524,7 @@ class BotBid:
                     contracts, decl_tricks_softmax1 = self.expected_tricks_dd(hands_np_as_pbn, auctions_np, candidate.bid)
                     ev = self.expected_score(len(auction) % 4, contracts, decl_tricks_softmax1)
                     ev_scores[candidate.bid] = ev
+                    search_evidence[candidate.bid] = (ev, contracts)
                     decoded_tricks = np.argmax(decl_tricks_softmax1, axis=1)
                 if self.models.estimator == "sde" or self.models.estimator == "both":
                     contracts, decl_tricks_softmax2 = self.expected_tricks_sd(hands_np, auctions_np)
@@ -1087,7 +1089,16 @@ class BotBid:
 
         #print("Final candidate", candidates[0].bid , explain)
         # We return the bid with the highest expected score or highest adjusted score 
-        return BidResp(bid=candidates[0].bid, candidates=candidates, samples=samples[:self.sample_hands_for_review], shape=p_shp, hcp=p_hcp, who=who, quality=quality, alert = alert, explanation=explain)
+        resp = BidResp(bid=candidates[0].bid, candidates=candidates, samples=samples[:self.sample_hands_for_review], shape=p_shp, hcp=p_hcp, who=who, quality=quality, alert = alert, explanation=explain)
+        if search_evidence:
+            # What the search scored, kept for explanations (gameapi /bid details=true): every sample (absolute
+            # seats N E S W, then the sample's weight), and for each candidate the score for our side and the
+            # final contract of its rollout on each sample, in the same order. References only: no call changes.
+            resp.evidence = {'seat': 'NESW'[self.seat], 'scoring': 'MP' if self.models.matchpoint else 'IMP',
+                             'samples': samples,
+                             'scores': {b: [round(float(x), 1) for x in ev] for b, (ev, _) in search_evidence.items()},
+                             'contracts': {b: [str(x) for x in cs] for b, (_, cs) in search_evidence.items()}}
+        return resp
     
     def do_rollout(self, auction, candidates, max_candidate_score, sample_count):
         # a call named by the auction model is only there to be simulated, however sure the network is
