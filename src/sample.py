@@ -200,6 +200,8 @@ class Sample:
         # least that many HCP (empty = off)
         nt = conf.get('sampling', 'second_call_2nt_to_3nt', fallback='').strip()
         sample.second_call_2nt_to_3nt = int(nt) if nt else None
+        # second_call_2nt_to_3nt_scoring = IMP or MP: the rule above only at that scoring (empty = both)
+        sample.second_call_2nt_to_3nt_scoring = conf.get('sampling', 'second_call_2nt_to_3nt_scoring', fallback='').strip()
         # five_card_two_over_one = <HCP>: over partner's 1H/1S and a pass, the forcing 1NT becomes two of the one
         # five-card lower suit (no six-card suit, two cards or fewer in partner's major) with that many HCP
         five = conf.get('sampling', 'five_card_two_over_one', fallback='').strip()

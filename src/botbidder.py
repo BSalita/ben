@@ -363,6 +363,11 @@ class BotBid:
         least = getattr(self.sampler, 'second_call_2nt_to_3nt', None)
         if not least or chosen != '2N':
             return None
+        # second_call_2nt_to_3nt_scoring = IMP or MP keeps the rule to that scoring (empty = both). Against
+        # Brill's robots (2026-11-25) the rule gains at IMPs but loses about 1% at matchpoints.
+        only = getattr(self.sampler, 'second_call_2nt_to_3nt_scoring', '')
+        if only and ('MP' if self.models.matchpoint else 'IMP') != only.upper():
+            return None
         calls = [c for c in auction if c != 'PAD_START']
         if len(calls) < 6:
             return None
