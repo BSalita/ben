@@ -74,6 +74,12 @@ def player_to_nesw_i(player_i, contract):
     return (decl_i + player_i + 1) % 4
 
 class Sample:
+    # card play's score of a layout against the auction (from_conf reads them from [sampling])
+    play_bid_score = 'min'
+    play_bid_temperature = 0.5
+    play_bid_min_weight = 0.001
+    play_bid_floor = 1e-4
+    play_weighted_seats = 'all'
 
     def __init__(self, lead_accept_threshold, lead_accept_threshold_suit, lead_accept_threshold_honors, lead_accept_threshold_partner_trust, bidding_threshold_sampling, play_accept_threshold_opponents, play_accept_threshold_declarer, play_accept_threshold_partner, min_play_accept_threshold_samples, bid_accept_play_threshold, 
                  bid_accept_threshold_bidding, bid_extend_play_threshold, sample_hands_auction, min_sample_hands_auction, sample_boards_for_auction, sample_boards_for_auction_step, warn_to_few_samples, increase_for_bid_count, sample_boards_for_auction_opening_lead, 
@@ -162,6 +168,32 @@ class Sample:
                    bid_accept_play_threshold, bid_accept_threshold_bidding, bid_extend_play_threshold, sample_hands_auction, min_sample_hands_auction, sample_boards_for_auction, sample_boards_for_auction_step, warn_to_few_samples, increase_for_bid_count, 
                    sample_boards_for_auction_opening_lead, sample_hands_opening_lead, sample_hands_play, min_sample_hands_play, min_sample_hands_play_bad, sample_boards_for_play, max_unknown_cards_for_sampling, use_biddinginfo, check_remaining_cards, check_discard, use_distance, no_samples_when_no_search, 
                    exclude_samples, no_biddingquality_after_bid_count, hcp_reduction_factor, shp_reduction_factor, sample_previous_round_if_needed, verbose)
+        # How the card play scores a layout against the auction:
+        #   min      = the lowest probability the bidding network gives any call of the two hidden hands, then hard
+        #              cuts (bidding_threshold_sampling, bid_accept_play_threshold, else the best min_sample_hands_play_bad)
+        #   weighted = the likelihood of all those calls, tempered: w = exp(T * (sum of log P(call) - best in the pool)),
+        #              no hard cut; layouts are drawn by weight and weighted by it in the evaluation
+        sample.play_bid_score = conf.get('sampling', 'play_bid_score', fallback='min').strip()
+        if sample.play_bid_score not in ('min', 'weighted'):
+            raise ValueError(f"play_bid_score must be min or weighted, not {sample.play_bid_score}")
+        sample.play_bid_temperature = conf.getfloat('sampling', 'play_bid_temperature', fallback=0.5)
+        # layouts whose weight is below this share of the best are dropped (weighted only)
+        sample.play_bid_min_weight = conf.getfloat('sampling', 'play_bid_min_weight', fallback=0.001)
+        # a call's probability is not taken below this in the log-likelihood (weighted only)
+        sample.play_bid_floor = conf.getfloat('sampling', 'play_bid_floor', fallback=1e-4)
+        # who plays with the weighted score: all, or defence (declarer and dummy keep min)
+        sample.play_weighted_seats = conf.get('sampling', 'play_weighted_seats', fallback='all').strip()
+        if sample.play_weighted_seats not in ('all', 'defence'):
+            raise ValueError(f"play_weighted_seats must be all or defence, not {sample.play_weighted_seats}")
+        # optional belief model (weighted only): model file and the folder holding belief.py. Each layout's log-weight
+        # becomes play_belief_weight * log-likelihood of its hidden cards under the model ("replace"), or that plus
+        # the bidding term T * log-likelihood of the calls ("multiply")
+        sample.play_belief_model = conf.get('sampling', 'play_belief_model', fallback='').strip()
+        sample.play_belief_code = conf.get('sampling', 'play_belief_code', fallback='').strip()
+        sample.play_belief_mode = conf.get('sampling', 'play_belief_mode', fallback='replace').strip()
+        if sample.play_belief_mode not in ('replace', 'multiply'):
+            raise ValueError(f"play_belief_mode must be replace or multiply, not {sample.play_belief_mode}")
+        sample.play_belief_weight = conf.getfloat('sampling', 'play_belief_weight', fallback=1.0)
         # optional: run folder of the auction model; when set, the bidding search takes its deals from it
         sample.auction_model = conf.get('sampling', 'auction_model', fallback='').strip()
         # with auction_model set: take the deals from it (default), and/or let it add a candidate in the passout
@@ -1154,7 +1186,7 @@ class Sample:
 
         return lead_softmax[:, opening_lead_card]
 
-    def get_bid_scores(self, nesw_i, partner, auction, vuln, sample_hands, models):
+    def get_bid_scores(self, nesw_i, partner, auction, vuln, sample_hands, models, return_log=False):
         n_steps = binary.calculate_step_bidding(auction)
         if self.verbose:
             print(f"Get bid scores for samples for {nesw_i}. First hand {hand_to_str(sample_hands[0])}")
@@ -1179,12 +1211,18 @@ class Sample:
 
         sample_bids = sample_bids.reshape((sample_hands.shape[0], n_steps, -1))
         min_scores = np.ones(sample_hands.shape[0], dtype=np.float32)
+        log_scores = np.zeros(sample_hands.shape[0], dtype=np.float64)
 
         # We check the bid for each bidding round
         for i in range(n_steps):
             if actual_bids[i] not in (bidding.BID2ID['PAD_START'], bidding.BID2ID['PAD_END']):
                 # Consider adding more trust in the first bidding rounds by multiplying with bidding round
                 min_scores = np.minimum(min_scores, sample_bids[:, i, actual_bids[i]])
+                if return_log:
+                    log_scores += np.log(np.maximum(sample_bids[:, i, actual_bids[i]].astype(np.float64), self.play_bid_floor))
+        if return_log:
+            # also the log-likelihood of the hand's calls: the sum over its calls of log P(call)
+            return min_scores, log_scores
         return min_scores
     
     def required_samples(self, X, max_samples, confidence=0.9999):
@@ -1402,11 +1440,18 @@ class Sample:
         # Loop the samples for each of the 2 hidden hands to check bidding
         # We should generally trust our partners bidding most
         
+        # player_i is BEN's relative seat: 0 lefty, 1 dummy, 2 righty, 3 declarer
+        weighted = self.play_bid_score == 'weighted' and (self.play_weighted_seats == 'all' or player_i in (0, 2))
+        log_bid_scores = np.zeros(states[0].shape[0], dtype=np.float64)
         for h_i in [hidden_1_i, hidden_2_i]:
             #if (player_i + 2) % 4 == h_i:
             h_i_nesw = player_to_nesw_i(h_i, contract)
             partner = player_i == (h_i + 2) % 4
-            bid_scores_h_i = self.get_bid_scores(h_i_nesw, partner, auction, vuln, states[h_i][:, 0, :32], models)
+            if weighted:
+                bid_scores_h_i, log_h_i = self.get_bid_scores(h_i_nesw, partner, auction, vuln, states[h_i][:, 0, :32], models, return_log=True)
+                log_bid_scores += log_h_i
+            else:
+                bid_scores_h_i = self.get_bid_scores(h_i_nesw, partner, auction, vuln, states[h_i][:, 0, :32], models)
             min_bid_scores = np.minimum(min_bid_scores, bid_scores_h_i)
 
         # Perhaps this should be calculated more statistical, as we are just taking the bid with the highest score
@@ -1414,10 +1459,34 @@ class Sample:
         # Round min_bid_scores to 3 decimals
         min_bid_scores = np.round(min_bid_scores, 5)
 
-        # Get the indices that would sort the rounded scores in descending order
-        sorted_indices = np.argsort(min_bid_scores)[::-1]
+        min_score_of = None
+        if weighted:
+            # From here on the layouts are ranked and drawn by their tempered likelihood relative to the best
+            # layout (1.0); the lowest-call score is kept beside it, by layout, for the sample quality.
+            def layout_key(st, i):
+                return st[hidden_1_i][i, 0, :32].tobytes() + st[hidden_2_i][i, 0, :32].tobytes()
+            min_score_of = {layout_key(states, i): float(min_bid_scores[i]) for i in range(states[0].shape[0])}
+            log_w = self.play_bid_temperature * log_bid_scores
+            if self.play_belief_model:
+                import belief_weights
+                lb = belief_weights.layout_weights_log(
+                    self.play_belief_model, self.play_belief_code, auction, vuln, contract, bidding.get_strain_i(contract),
+                    player_to_nesw_i, player_i, trick_i, played_cards, len(current_trick),
+                    card_players[player_i].hand52, card_players[player_i].public52, hidden_1_i, hidden_2_i,
+                    states[hidden_1_i][:, 0, :32], states[hidden_2_i][:, 0, :32])
+                if lb is not None:
+                    lb = self.play_belief_weight * lb
+                    log_w = lb if self.play_belief_mode == 'replace' else log_w + lb
+                elif self.verbose:
+                    print("belief model gave no weights (play history did not add up)")
+            rank_scores = np.round(np.exp(log_w - np.max(log_w)), 5)
+        else:
+            rank_scores = min_bid_scores
 
-        sorted_min_bid_scores = min_bid_scores[sorted_indices]
+        # Get the indices that would sort the rounded scores in descending order
+        sorted_indices = np.argsort(rank_scores)[::-1]
+
+        sorted_min_bid_scores = rank_scores[sorted_indices]
         # Sort second dimension within each array in states based on min_bid_scores
         bidding_states = [s[sorted_indices] for s in states]
 
@@ -1425,7 +1494,13 @@ class Sample:
         valid_bidding_samples_good = np.sum(sorted_min_bid_scores > self.bidding_threshold_sampling)
         #valid_bidding_samples = np.sum(sorted_min_bid_scores > self.bid_extend_play_threshold)
         #print(valid_bidding_samples_good, valid_bidding_samples, sample_boards_for_play)
-        if bidding_states[0].shape[0] > 2 * self.sample_hands_play and valid_bidding_samples_good > 10:
+        if weighted:
+            if bidding_states[0].shape[0] > 2 * self.sample_hands_play:
+                # drop the layouts too unlikely to be drawn or to count (the best one always stays)
+                mask = sorted_min_bid_scores >= self.play_bid_min_weight
+                bidding_states = [s[mask] for s in bidding_states]
+                sorted_min_bid_scores = sorted_min_bid_scores[mask]
+        elif bidding_states[0].shape[0] > 2 * self.sample_hands_play and valid_bidding_samples_good > 10:
             # We drop the samples we are not going to use
             mask = sorted_min_bid_scores > self.bid_extend_play_threshold/2
             bidding_states = [s[mask] for s in bidding_states]
@@ -1496,7 +1571,33 @@ class Sample:
         # With only few cards left we will not filter the samples according to the bidding.
         # We do find only unique, and when starting trick 11 we do not have more than 20 possible combinations
         # As we are using probability for bidding, play etc it seems OK just to take what we have left
-        if trick_i + 1 <= 10:
+        occurrence_weights = None
+        if weighted:
+            # Weights relative to the best layout left after the lead and play checks; no hard cut on the calls.
+            w = sorted_min_bid_scores / max(float(np.max(sorted_min_bid_scores)), 1e-12)
+            keep = w >= self.play_bid_min_weight
+            keep[int(np.argmax(w))] = True
+            if trick_i + 1 > 10:
+                keep[:] = True
+            bidding_states = [s[keep] for s in bidding_states]
+            lead_scores, play_scores = lead_scores[keep], play_scores[keep]
+            logical_play_scores, discard_scores = logical_play_scores[keep], discard_scores[keep]
+            w = w[keep]
+            if trick_i + 1 <= 10 and bidding_states[0].shape[0] > n_samples:
+                # More layouts than we evaluate: draw n_samples by weight with replacement and count each layout
+                # as often as it was drawn (an unbiased resample of the weighted layouts)
+                drawn = rng.choice(np.arange(w.shape[0]), size=n_samples, replace=True, p=w / np.sum(w))
+                idx, times = np.unique(drawn, return_counts=True)
+                order = np.lexsort((idx, -times))   # most drawn first, then the better-ranked layout
+                idx, times = idx[order], times[order]
+                bidding_states = [s[idx] for s in bidding_states]
+                lead_scores, play_scores = lead_scores[idx], play_scores[idx]
+                logical_play_scores, discard_scores = logical_play_scores[idx], discard_scores[idx]
+                occurrence_weights = times.astype(np.float64)
+            else:
+                occurrence_weights = w.astype(np.float64)
+            sorted_min_bid_scores = np.array([min_score_of[layout_key(bidding_states, i)] for i in range(bidding_states[0].shape[0])], dtype=np.float32)
+        elif trick_i + 1 <= 10:
             # trusting the bidding after sampling cards
             # This could probably be set based on number of deals matching or sorted
             if valid_bidding_samples >= self.sample_hands_play: 
@@ -1617,13 +1718,22 @@ class Sample:
         play_scores = play_scores[:bidding_states[0].shape[0]]
         logical_play_scores = logical_play_scores[:bidding_states[0].shape[0]]
         discard_scores = discard_scores[:bidding_states[0].shape[0]]
-        quality = round(np.mean(sorted_min_bid_scores),5)
+        if occurrence_weights is not None:
+            occurrence_weights = occurrence_weights[:bidding_states[0].shape[0]]
+            # quality stays the lowest-call score, averaged with the weights the layouts carry
+            quality = round(float(np.sum(sorted_min_bid_scores * occurrence_weights) / np.sum(occurrence_weights)), 5)
+        else:
+            quality = round(np.mean(sorted_min_bid_scores),5)
 
         if self.verbose:
             print(f"Returning {min(bidding_states[0].shape[0],n_samples)} {quality:.5f}")
         assert bidding_states[0].shape[0] > 0, "No samples generated for play"
 
-        probability_of_occurence = convert_to_probability_with_weight(sorted_min_bid_scores, bidding_states, counts, logical_play_scores, discard_scores, quality)
+        if occurrence_weights is not None:
+            # the layouts' weights always count in the evaluation, whatever the quality
+            probability_of_occurence = convert_to_probability_with_weight(occurrence_weights, bidding_states, counts, logical_play_scores, discard_scores, 1.0)
+        else:
+            probability_of_occurence = convert_to_probability_with_weight(sorted_min_bid_scores, bidding_states, counts, logical_play_scores, discard_scores, quality)
 
         return bidding_states, sorted_min_bid_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds
 
