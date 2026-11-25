@@ -502,7 +502,7 @@ class BotBid:
                 decl_tricks_softmax3 = None
                 
                 if self.models.double_dummy_calculator:
-                    contracts, decl_tricks_softmax1 = self.expected_tricks_dd(hands_np_as_pbn, auctions_np, candidate.bid)
+                    contracts, decl_tricks_softmax1 = self.expected_tricks_dd(hands_np_as_pbn, auctions_np, candidate.bid, hands_np=hands_np)
                     ev = self.expected_score(len(auction) % 4, contracts, decl_tricks_softmax1)
                     ev_scores[candidate.bid] = ev
                     decoded_tricks = np.argmax(decl_tricks_softmax1, axis=1)
@@ -803,7 +803,7 @@ class BotBid:
                     auction_np[:,i] = bidding.BID2ID[bid]
 
                 hands_np_as_pbn = self.translate_hands(hands_np, self.hand_str, sample_count)
-                contracts, decl_tricks_softmax = self.expected_tricks_dd(hands_np_as_pbn, auction_np)
+                contracts, decl_tricks_softmax = self.expected_tricks_dd(hands_np_as_pbn, auction_np, hands_np=hands_np)
                 decoded_tricks = np.argmax(decl_tricks_softmax, axis=1)
                 if self.verbose:
                     print("tricks", np.mean(decoded_tricks))
@@ -1009,7 +1009,7 @@ class BotBid:
                         auction_np[:,i] = bidding.BID2ID[bid]
 
                     # Calculate score for the hands
-                    contracts, decl_tricks_softmax = self.expected_tricks_dd(hands_np_as_pbn[:self.models.max_samples_checked], auction_np)
+                    contracts, decl_tricks_softmax = self.expected_tricks_dd(hands_np_as_pbn[:self.models.max_samples_checked], auction_np, hands_np=hands_np[:self.models.max_samples_checked])
                     decoded_tricks = np.argmax(decl_tricks_softmax, axis=1)
                     if self.verbose:
                         print("tricks", np.mean(decoded_tricks))
@@ -1639,9 +1639,86 @@ class BotBid:
         decl_tricks_softmax = self.models.sd_model_no_lead.pred_fun(X_sd)
         return contracts, decl_tricks_softmax
 
-    def expected_tricks_dd(self, hands_np_as_pbn, auctions_np, bid = None):
+    def expected_tricks_dd_after_lead(self, hands_np, hands_np_as_pbn, auctions_np, mode):
+        """[eval] dd_after_lead = top | weighted: double dummy after the opening lead the lead network
+        anticipates, not after the lead that is best for the defence. top = the network's first choice,
+        weighted = every lead the leader can make, by the network's share. Returns the contracts and, a
+        sample, the probability of each number of declarer's tricks (expected_tricks_dd gives a single 1)."""
+        n_samples = auctions_np.shape[0]
+        n_play = self.models.n_cards_play
+        per_suit = n_play // 4
+        parse_play = binary.parse_hand_f(n_play)
+        contracts = []
+        strains = np.full(n_samples, -1, dtype=np.int32)
+        leaders = np.zeros(n_samples, dtype=np.int32)
+        X_ftrs = np.zeros((n_samples, 10 + n_play))
+        B_ftrs = np.zeros((n_samples, 15))
+        leader_play = np.zeros((n_samples, n_play))
+        for i in range(n_samples):
+            sample_auction = [bidding.ID2BID[bid_i] for bid_i in list(auctions_np[i, :]) if bid_i != 1]
+            contract = bidding.get_contract(sample_auction)
+            if contract is None:
+                contracts.append("PASS")
+                continue
+            contracts.append(contract)
+            strains[i] = 'NSHDC'.index(contract[1])
+            leader = ('NESW'.index(contract[-1]) + 1) % 4
+            # the solver's hands start at our seat; the leader's cards are read from there, so the
+            # lead network and the solver see the same small cards
+            leaders[i] = (leader + 4 - self.seat) % 4
+            leader_play[i] = parse_play(hands_np_as_pbn[i][2:].split(' ')[leaders[i]])
+            X_ftrs[i, :], B_ftrs[i, :] = binary.get_auction_binary_for_lead(
+                sample_auction, hands_np[i:i+1, leader, :], leader_play[i:i+1], self.vuln, self.dealer, self.models)
+
+        decl_tricks = np.zeros((n_samples, 14))
+        played = strains >= 0
+        if not np.any(played):
+            return contracts, decl_tricks
+
+        # NT model for the notrump contracts, suit model for the rest, as in botopeninglead.py
+        lead_softmax = np.zeros((n_samples, n_play))
+        for samples, lead_model in ((played & (strains == 0), self.models.lead_nt_model), (played & (strains > 0), self.models.lead_suit_model)):
+            if np.any(samples):
+                lead_softmax[samples] = lead_model.pred_fun(X_ftrs[samples], B_ftrs[samples])[:, :n_play]
+        # only a card the leader holds can be led
+        lead_softmax = follow_suit(lead_softmax, leader_play, np.zeros((n_samples, 4)), n_play)
+        if mode == "top":
+            top = np.argmax(lead_softmax, axis=1)
+            lead_softmax = np.zeros_like(lead_softmax)
+            lead_softmax[np.arange(n_samples), top] = 1
+
+        groups = defaultdict(list)
+        for i in np.nonzero(played)[0]:
+            groups[(int(strains[i]), int(leaders[i]))].append(int(i))
+        for (strain, leader), indices in groups.items():
+            solved = self.ddsolver.solve_leads(strain, leader, [hands_np_as_pbn[i] for i in indices], purpose="bid")
+            for i, cards in zip(indices, solved):
+                total = 0.0
+                for c in np.nonzero(lead_softmax[i] > 0)[0]:
+                    suit, rank = divmod(int(c), per_suit)
+                    if rank < per_suit - 1:
+                        defence = cards.get(suit * 13 + rank)
+                    else:
+                        # a small card: the one of them that is best for the defence
+                        small = [v for card, v in cards.items() if card // 13 == suit and card % 13 >= per_suit - 1]
+                        defence = max(small) if small else None
+                    if defence is None:
+                        continue
+                    decl_tricks[i, 13 - defence] += lead_softmax[i, c]
+                    total += lead_softmax[i, c]
+                if total > 0:
+                    decl_tricks[i] /= total
+                else:
+                    # no lead named: the defence's best lead, as without the setting
+                    decl_tricks[i, 13 - max(cards.values())] = 1
+        return contracts, decl_tricks
+
+    def expected_tricks_dd(self, hands_np_as_pbn, auctions_np, bid = None, hands_np = None):
         n_samples = auctions_np.shape[0]
         assert len(hands_np_as_pbn) == n_samples
+        lead_mode = getattr(self.models, 'dd_after_lead', 'none')
+        if lead_mode != 'none' and hands_np is not None:
+            return self.expected_tricks_dd_after_lead(hands_np, hands_np_as_pbn, auctions_np, lead_mode)
         decl_tricks_softmax = np.zeros((n_samples, 14), dtype=np.int32)
         contracts = []
         t_start = time.time()

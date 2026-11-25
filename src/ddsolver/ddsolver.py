@@ -376,6 +376,36 @@ class DDSolver:
         return card_results if solutions == 1 else _fixed_card_order(card_results)
 
 
+    def solve_leads(self, strain_i, leader_i, hands_pbn, purpose=""):
+        """Every legal opening lead of each board: a list with one dict {card code: tricks of the
+        leader's side} a board. solve() with solutions = 3 collects all boards' cards in one dict,
+        which only lines up when the leader holds the same cards on every board; here the leaders'
+        hands may differ from board to board (the sampled deals of the bidding search)."""
+        card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100, 0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004]
+        trump = (strain_i - 1) % 5
+        dds_mode = self.dds_mode
+        clib = globals().get("_clib")
+
+        def _solve_one(pbn):
+            if clib is not None:
+                fut = clib.solve_board_pbn(pbn, trump, leader_i, (0, 0, 0), (0, 0, 0), -1, 3, dds_mode)
+            else:
+                fut = dds3.solve_board_pbn(pbn, trump=trump, first=leader_i, current_trick_suit=(0, 0, 0),
+                                           current_trick_rank=(0, 0, 0), target=-1, solutions=3, mode=dds_mode,
+                                           context=_thread_context())
+            cards = {}
+            for i in range(fut["cards"]):
+                suit_i = fut["suit"][i]
+                cards[suit_i * 13 + 14 - fut["rank"][i]] = fut["score"][i]
+                for k, rank_code in enumerate(card_rank):
+                    if rank_code & fut["equals"][i] > 0:
+                        cards[suit_i * 13 + k] = fut["score"][i]
+            return cards
+
+        label = f'dds_solve_leads_{purpose}' if purpose else 'dds_solve_leads'
+        with ModelTimer.time_call(label, items=len(hands_pbn)):
+            return list(self._pool.map(_solve_one, hands_pbn))
+
     def expected_tricks_dds(self, card_results):
         return {card:round((sum(values)/len(values)),2) for card, values in card_results.items()}
 
