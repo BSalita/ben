@@ -183,7 +183,11 @@ def live(board):
     walk, south_calls, north_calls, asked = [], {}, {}, 0
     while not bidding.auction_over(ben_auction(walk)):
         seat_i = (dealer_i + len(walk)) % 4
-        if seat_i in ours:
+        forced = cfg.get('force', {}).get(' '.join(walk).lstrip('P ')) if seat_i in ours else None
+        if forced:
+            call = forced
+            (south_calls if seat_i == 2 else north_calls)['-'.join(walk)] = call
+        elif seat_i in ours:
             np.random.seed(42)
             bot = BotBid(vuln, hands[seat_i], W['models'], Sample.from_conf(W['conf']), seat_i, dealer_i, W['dds'],
                          False, False)
@@ -220,6 +224,9 @@ def main():
     parser.add_argument('--ours', default='S', choices=['S', 'NS'],
                         help='seats the config bids: S (Brill robots North, East, West) or NS (the config is '
                              'both partners, Brill robots East-West; for systems other than the robots\' own)')
+    parser.add_argument('--force', action='append', default=[], metavar="'CALLS=CALL'",
+                        help="our seat makes CALL after CALLS (the auction without the dealer's leading passes, "
+                             "calls apart by spaces), e.g. '1S P 2S P 2N P=3C'; may be given more than once")
     args = parser.parse_args()
 
     started = datetime.datetime.now()
@@ -244,6 +251,7 @@ def main():
     cfg = {'conf': ab_match.resolve(args.conf), 'robots': None, 'out': args.out, 'matchpoint': args.matchpoint,
            'cache': os.path.abspath(args.cache), 'url': args.url.rstrip('/'), 'pause': args.pause,
            'daily_budget': args.daily_budget, 'ours': args.ours,
+           'force': dict(f.rsplit('=', 1) for f in args.force),
            'dds_threads': args.dds_threads, 'tf_threads': args.tf_threads}
     with open(os.path.join(args.out, 'run.json'), 'w') as f:
         json.dump({'argv': sys.argv, 'cfg': cfg, 'boards': len(boards), 'git': ab_match.git_head(),
