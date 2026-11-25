@@ -118,6 +118,8 @@ class CardResp:
         self.hcp = hcp
         self.quality = quality
         self.who = who
+        # The DD evidence behind the card (botcardplayer.play_card); play_evidence.evidence_dict serialises it
+        self.evidence = None
 
     def __str__(self):
         return f"CardResp(card={self.card}, candidates={self.candidates}, samples={self.samples}, shape={self.shape}, hcp={self.hcp}, quality={self.quality}, who={self.who}, claim={self.claim})"

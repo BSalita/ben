@@ -53,6 +53,7 @@ from botopeninglead import BotLead
 from botcardplayer import CardPlayer
 from bidding import bidding
 from objects import Card, CardResp
+import play_evidence
 import deck52
 import binary
 
@@ -1466,11 +1467,14 @@ def play():
             if "samples" in result: del result["samples"]
             if "shape" in result: del result["shape"]
             if "hcp" in result: del result["hcp"]
+        elif getattr(card_resp, "evidence", None):
+            # every sampled layout, every card's DD tricks on it, and the layouts' weights (for explanations)
+            result["evidence"] = play_evidence.evidence_dict(card_resp.evidence, decl_i)
         result["player"] = cardplayer
         result["matchpoint"] = mp
         result["MP_or_IMP"] = models.use_real_imp_or_mp
         if record: 
-            calculations = {"hand":hand_str, "dummy":dummy_str, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction, "play":result}
+            calculations = {"hand":hand_str, "dummy":dummy_str, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction, "play":{k: v for k, v in result.items() if k != "evidence"}}
             logger.info(f"Calculations play: {json.dumps(calculations)}")
         print(f'Request took {(time.time() - t_start):0.2f} seconds')
         return json.dumps(result)

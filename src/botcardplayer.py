@@ -181,6 +181,8 @@ class CardPlayer:
 
         if quality < self.models.pimc_bidding_quality:
             weight = 0.5
+        self.last_pimc_evidence = dict(engine=engine, weight=weight,
+                                       cards={k: v[:3] for k, v in pimc_resp.items()})
 
         for card52, (e_tricks, e_score, e_make, msg) in dd_resp.items():
             if card52 in pimc_resp:
@@ -297,6 +299,8 @@ class CardPlayer:
         #print(f'{Fore.YELLOW}Play card for player {self.player_i}{Fore.RESET}')
         t_start = time.time()
         samples = []
+        self.last_dd_evidence = None
+        self.last_pimc_evidence = None
 
         # Pre-convert scores to plain Python to avoid numpy scalar overhead in loop
         n_review = min(self.sample_hands_for_review, players_states[0].shape[0])
@@ -399,6 +403,9 @@ class CardPlayer:
 
         if self.verbose:
             print(f'Play card response time: {time.time() - t_start:0.4f}')
+        if self.last_dd_evidence is not None:
+            card_resp.evidence = dict(self.last_dd_evidence, player_i=self.player_i, strain_i=self.strain_i,
+                                      contract=self.contract, pimc=self.last_pimc_evidence)
         return card_resp
 
     def pick_card_nn_only(self, current_trick52, tricks52, play_status, samples, quality, card_scores_nn):
@@ -570,6 +577,14 @@ class CardPlayer:
                     card_ev = calculate.get_card_ev_mp(dd_solved, self.n_tricks_taken, self.player_i)
                 else:
                     card_ev = calculate.get_card_ev(dd_solved, self.n_tricks_taken, self.player_i, self.score_by_tricks_taken)
+
+        # The evidence behind this card, kept for explanations (gameapi /play returns it only with details=true).
+        # Keeping references costs nothing and changes no play.
+        self.last_dd_evidence = dict(
+            layouts=hands_pbn, dd=dd_solved, weights=probabilities_list if use_probability else None,
+            leader_i=leader_i, current_trick52=list(current_trick52), tricks_needed=tricks_needed,
+            n_tricks_taken=self.n_tricks_taken, score_by_tricks=self.score_by_tricks_taken,
+            use_probability=use_probability, quality=bidding_quality)
 
         card_result = {}
         claim_cards = []
