@@ -646,6 +646,10 @@ class Models:
         # Card play by the neural network alone: no double dummy, PIMC or SuitC. For measuring
         # the play models themselves; off by default.
         models.play_nn_only = conf.getboolean('cardplay', 'play_nn_only', fallback=False)
+        # none | top | weighted: the bidding search's double dummy after the anticipated opening lead
+        models.dd_after_lead = (conf.get('eval', 'dd_after_lead', fallback='none') or 'none').strip().lower()
+        if models.dd_after_lead not in ('none', 'top', 'weighted'):
+            raise ValueError(f"[eval] dd_after_lead must be none, top or weighted, not {models.dd_after_lead!r}")
         models.opponent_binfo_model = opponent_binfo_model
         models.partner_model = partner_model
         return models
