@@ -1091,11 +1091,17 @@ class BotBid:
         # We return the bid with the highest expected score or highest adjusted score 
         resp = BidResp(bid=candidates[0].bid, candidates=candidates, samples=samples[:self.sample_hands_for_review], shape=p_shp, hcp=p_hcp, who=who, quality=quality, alert = alert, explanation=explain)
         if search_evidence:
-            # What the search scored, kept for explanations (gameapi /bid details=true): every sample (absolute
-            # seats N E S W, then the sample's weight), and for each candidate the score for our side and the
-            # final contract of its rollout on each sample, in the same order. References only: no call changes.
+            # What the search scored, kept for explanations (gameapi /bid details=true), in the names of /play's
+            # evidence: every sampled layout (PBN N:<N> <E> <S> <W>, absolute seats; small cards as x), the
+            # layouts' weights from the sampler (normalised, as a separate list; the search's averages are
+            # unweighted), and for each candidate the score for our side
+            # and the final contract of its rollout on each layout, in the same order. Copies only: no call changes.
+            layouts = ['N:' + ' '.join(s.split(' - ')[0].split()) for s in samples]
+            # a sample reads 'N E S W - weight', and after the rollouts ' | auction (tricks) | ...' for each candidate
+            w = np.array([float(s.split(' - ', 1)[1].split('|')[0]) for s in samples]) if samples else np.zeros(0)
+            w = w / w.sum() if w.sum() > 0 else np.full(len(w), 1.0 / max(1, len(w)))
             resp.evidence = {'seat': 'NESW'[self.seat], 'scoring': 'MP' if self.models.matchpoint else 'IMP',
-                             'samples': samples,
+                             'layouts': layouts, 'weights': [round(float(x), 6) for x in w],
                              'scores': {b: [round(float(x), 1) for x in ev] for b, (ev, _) in search_evidence.items()},
                              'contracts': {b: [str(x) for x in cs] for b, (_, cs) in search_evidence.items()}}
         return resp
