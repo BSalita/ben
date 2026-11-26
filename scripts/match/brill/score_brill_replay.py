@@ -28,12 +28,7 @@ import elo_brill  # noqa: E402
 SEATS = 'NESW'
 BEN_FAMILY = ('R:BBOBen', 'R:BEN')
 REFERENCE = ('R:BBOBen', 'R:BEN', 'R:Brill')
-_IMP_BOUNDS = elo_brill._IMP_BOUNDS
-
-
-def imps(diff):
-    diff = np.asarray(diff)
-    return np.sign(diff) * np.searchsorted(_IMP_BOUNDS, np.abs(diff), side='right')
+imps = elo_brill.imps  # the WBF IMP table, as Brill scores
 
 
 def contract_of(calls, dealer):
