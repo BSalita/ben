@@ -650,6 +650,11 @@ class Models:
         models.dd_after_lead = (conf.get('eval', 'dd_after_lead', fallback='none') or 'none').strip().lower()
         if models.dd_after_lead not in ('none', 'top', 'weighted'):
             raise ValueError(f"[eval] dd_after_lead must be none, top or weighted, not {models.dd_after_lead!r}")
+        # Weight of the opening-lead suit adjustments (reward_lead_partner_suit, trump_lead_penalty, the slam
+        # Q/J penalties) on the matchpoint lead score, which is -1..+1 (calculate.calculate_mp_score). It was 10,
+        # made for the old 0..100 scale, so at MP the adjustments outweighed every simulated difference. At IMPs
+        # they are added at weight 1 (lead score -24..+24).
+        models.lead_suit_adjust_mp = conf.getfloat('adjustments', 'lead_suit_adjust_mp', fallback=0.1)
         models.opponent_binfo_model = opponent_binfo_model
         models.partner_model = partner_model
         return models

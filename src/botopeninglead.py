@@ -205,7 +205,7 @@ class BotLead:
                     p_make_contract=np.mean(tricks[:,i,1]),
                     expected_score_sd = expected_score_sd if expected_score_sd is None else expected_score_sd + suit_adjust[int(card_i) // 8],
                     expected_score_dd = expected_score_dd if expected_score_dd is None else expected_score_dd + suit_adjust[int(card_i) // 8],
-                    expected_score_mp = expected_score_mp if expected_score_mp is None else expected_score_mp + 10 * (suit_adjust[int(card_i) // 8]),
+                    expected_score_mp = expected_score_mp if expected_score_mp is None else expected_score_mp + self.models.lead_suit_adjust_mp * suit_adjust[int(card_i) // 8],
                     expected_score_imp = expected_score_imp if expected_score_imp is None else expected_score_imp + suit_adjust[int(card_i) // 8],
                     msg= f"suit adjust={suit_adjust[int(card_i) // 8]}" if suit_adjust[int(card_i) // 8] != 0 else ""
                 ))
@@ -344,7 +344,8 @@ class BotLead:
                 rule=dict(lead_accept_nn=self.models.lead_accept_nn,
                           use_biddingquality_in_eval=self.models.use_biddingquality_in_eval,
                           use_real_imp_or_mp=self.models.use_real_imp_or_mp_opening_lead,
-                          matchpoint=self.models.matchpoint))
+                          matchpoint=self.models.matchpoint,
+                          suit_adjust_mp=self.models.lead_suit_adjust_mp))
         if self.verbose:
             print(' Opening lead found in {0:0.1f} seconds.'.format(time.time() - t_start))
             print(f"{Fore.LIGHTCYAN_EX}")

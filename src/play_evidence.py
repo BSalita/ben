@@ -118,6 +118,8 @@ def lead_evidence_dict(ev, decl_i):
             nn={name: round(float(ev['nn'][0][c32]), 6) for name, c32 in
                 ((card_name(l52), c) for c, l52, _ in ev['solved'])},
             suit_adjust=dict(zip(SUITS, [round(float(a), 4) for a in ev['suit_adjust']])),
+            # the weight the adjustments are added at: 1 at IMPs, [adjustments] lead_suit_adjust_mp at MP
+            suit_adjust_weight=float(rule.get('suit_adjust_mp', 10)) if scoring == 'MP' else 1.0,
             accept_nn=float(rule['lead_accept_nn']),
             nn_on_bad_quality=bool(rule['use_biddingquality_in_eval']),
             scored=bool(rule['use_real_imp_or_mp']),
