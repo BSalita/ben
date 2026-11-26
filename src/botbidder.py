@@ -1100,7 +1100,10 @@ class BotBid:
             # a sample reads 'N E S W - weight', and after the rollouts ' | auction (tricks) | ...' for each candidate
             w = np.array([float(s.split(' - ', 1)[1].split('|')[0]) for s in samples]) if samples else np.zeros(0)
             w = w / w.sum() if w.sum() > 0 else np.full(len(w), 1.0 / max(1, len(w)))
+            lead_mode = getattr(self.models, 'dd_after_lead', 'none')
             resp.evidence = {'seat': 'NESW'[self.seat], 'scoring': 'MP' if self.models.matchpoint else 'IMP',
+                             # how the scores were estimated: plain double dummy, or after the anticipated opening lead
+                             'estimate': 'dd' if lead_mode == 'none' else f'dd_after_lead:{lead_mode}',
                              'layouts': layouts, 'sample_weights': [round(float(x), 6) for x in w],
                              'scores': {b: [round(float(x), 1) for x in ev] for b, (ev, _) in search_evidence.items()},
                              'contracts': {b: [str(x) for x in cs] for b, (_, cs) in search_evidence.items()}}
