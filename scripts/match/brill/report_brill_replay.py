@@ -232,7 +232,7 @@ def main():
                 others = np.delete(scores, i)
                 theirs = scores[i]
                 pct = lambda s: (np.sum(others < s) + 0.5 * np.sum(others == s)) / len(others) * 100  # noqa: E731
-                imp = lambda s: (np.sign(s - others) * np.searchsorted(elo_brill._IMP_BOUNDS, np.abs(s - others), side='right')).mean()  # noqa: E731
+                imp = lambda s: elo_brill.imps(s - others).mean()  # noqa: E731
                 d = diffs[t['player_id']]
                 d[0].append(pct(mine) - pct(theirs))
                 d[1].append(imp(mine) - imp(theirs))
