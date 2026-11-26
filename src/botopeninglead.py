@@ -106,6 +106,7 @@ class BotLead:
         # Validate input
         # We should check that auction match, that we are on lead
         t_start = time.time()
+        self.last_lead_dd = None
         lead_card_indexes, lead_softmax = self.get_opening_lead_candidates(auction)
         accepted_samples, sorted_bidding_score, tricks, p_hcp, p_shp, quality = self.simulate_outcomes_opening_lead(auction, lead_card_indexes, aceking)
         contract = bidding.get_contract(auction)
@@ -333,6 +334,17 @@ class BotLead:
             who=who,
             claim = -1
         )
+        if self.last_lead_dd:
+            # The evidence behind the lead, kept for explanations (gameapi /lead returns it only with details=true):
+            # references to what the DD evaluation solved; nothing here changes the lead.
+            card_resp.evidence = dict(
+                solved=self.last_lead_dd, tricks=tricks, contract=contract, scores_by_trick=scores_by_trick,
+                suit_adjust=list(suit_adjust), sample_scores=sorted_bidding_score, quality=quality, nn=lead_softmax,
+                n_cards_bidding=self.models.n_cards_bidding,
+                rule=dict(lead_accept_nn=self.models.lead_accept_nn,
+                          use_biddingquality_in_eval=self.models.use_biddingquality_in_eval,
+                          use_real_imp_or_mp=self.models.use_real_imp_or_mp_opening_lead,
+                          matchpoint=self.models.matchpoint))
         if self.verbose:
             print(' Opening lead found in {0:0.1f} seconds.'.format(time.time() - t_start))
             print(f"{Fore.LIGHTCYAN_EX}")
@@ -439,6 +451,7 @@ class BotLead:
         tricks_needed = 13 - (level + 6) + 1
 
         t_start = time.time()
+        self.last_lead_dd = []
         for j, lead_card_i in enumerate(lead_card_indexes):
             # Subtract the opening lead from the hand
             lead_hand = self.hand52[0]
@@ -470,6 +483,8 @@ class BotLead:
             onlead = 0
                 
             dd_solved = self.dds.solve(strain_i, onlead, [opening_lead52], hands_pbn, 1, purpose="lead")
+            # kept for the evidence (find_opening_lead): the card solved for this candidate and its layouts
+            self.last_lead_dd.append((int(lead_card_i), opening_lead52, hands_pbn))
 
             # Convert to plain Python list to avoid numpy scalar overhead in loop
             dd_max = dd_solved["max"][:n_accepted].tolist() if hasattr(dd_solved["max"], 'tolist') else list(dd_solved["max"][:n_accepted])

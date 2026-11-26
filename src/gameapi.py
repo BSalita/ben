@@ -1316,8 +1316,11 @@ def lead():
             if "samples" in result: del result["samples"]
             if "shape" in result: del result["shape"]
             if "hcp" in result: del result["hcp"]
+        elif getattr(card_resp, "evidence", None):
+            # every sampled layout, every candidate lead's DD tricks on it, and the scoring rules (for explanations)
+            result["evidence"] = play_evidence.lead_evidence_dict(card_resp.evidence, decl_i)
         if record: 
-            calculations = {"hand":hand, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction,  "lead":result}
+            calculations = {"hand":hand, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction,  "lead":{k: v for k, v in result.items() if k != "evidence"}}
             logger.info(f"Calculations lead: {json.dumps(calculations)}")
         print(f'Request took {(time.time() - t_start):0.2f} seconds')
         return json.dumps(result)
