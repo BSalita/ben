@@ -80,6 +80,7 @@ class Sample:
     play_bid_min_weight = 0.001
     play_bid_floor = 1e-4
     play_weighted_seats = 'all'
+    play_weighted_seats_mp = 'all'
 
     def __init__(self, lead_accept_threshold, lead_accept_threshold_suit, lead_accept_threshold_honors, lead_accept_threshold_partner_trust, bidding_threshold_sampling, play_accept_threshold_opponents, play_accept_threshold_declarer, play_accept_threshold_partner, min_play_accept_threshold_samples, bid_accept_play_threshold, 
                  bid_accept_threshold_bidding, bid_extend_play_threshold, sample_hands_auction, min_sample_hands_auction, sample_boards_for_auction, sample_boards_for_auction_step, warn_to_few_samples, increase_for_bid_count, sample_boards_for_auction_opening_lead, 
@@ -185,6 +186,10 @@ class Sample:
         sample.play_weighted_seats = conf.get('sampling', 'play_weighted_seats', fallback='all').strip()
         if sample.play_weighted_seats not in ('all', 'defence'):
             raise ValueError(f"play_weighted_seats must be all or defence, not {sample.play_weighted_seats}")
+        # the same at matchpoints (default: play_weighted_seats)
+        sample.play_weighted_seats_mp = conf.get('sampling', 'play_weighted_seats_mp', fallback=sample.play_weighted_seats).strip()
+        if sample.play_weighted_seats_mp not in ('all', 'defence'):
+            raise ValueError(f"play_weighted_seats_mp must be all or defence, not {sample.play_weighted_seats_mp}")
         # optional belief model (weighted only): model file and the folder holding belief.py. Each layout's log-weight
         # becomes play_belief_weight * log-likelihood of its hidden cards under the model ("replace"), or that plus
         # the bidding term T * log-likelihood of the calls ("multiply")
@@ -1441,7 +1446,8 @@ class Sample:
         # We should generally trust our partners bidding most
         
         # player_i is BEN's relative seat: 0 lefty, 1 dummy, 2 righty, 3 declarer
-        weighted = self.play_bid_score == 'weighted' and (self.play_weighted_seats == 'all' or player_i in (0, 2))
+        seats = self.play_weighted_seats_mp if models.matchpoint else self.play_weighted_seats
+        weighted = self.play_bid_score == 'weighted' and (seats == 'all' or player_i in (0, 2))
         log_bid_scores = np.zeros(states[0].shape[0], dtype=np.float64)
         for h_i in [hidden_1_i, hidden_2_i]:
             #if (player_i + 2) % 4 == h_i:

@@ -145,6 +145,74 @@ def calculate_mp_score(data, weights=None):
     return {key: round(v, 4)
             for key, v in _round_robin_score(data, _mp_value, weights).items()}
 
+
+def mp_percent(mp_scores):
+    """calculate_mp_score's -1 .. +1 values on the 0 .. 100 scale (50 = average).
+
+    The card player still works on 0 .. 100 at matchpoints: BEN's own DD path
+    (calculate_mp_score_probability), the 20 x suit-adjustment in
+    create_card and the thresholds in carding.py all assume it. PIMC is merged
+    with that DD score as a weighted average, so it must be on the same scale;
+    on -1 .. +1 it moved a card by at most 0.25 of 100 points and PIMC was in
+    effect switched off at matchpoints.
+    """
+    return {key: round(50 * (v + 1), 2) for key, v in mp_scores.items()}
+
+
+# The field's declarer tricks minus the double-dummy tricks of the deal (best lead), at the 18,129 matchpoint
+# tables of past Brill dailies (robots and humans alike, card_costs.csv.gz of src/card-play-proposal);
+# beyond +-3 folded into +-3.
+MP_FIELD_NOISE = "-3:0.008,-2:0.030,-1:0.156,0:0.534,1:0.205,2:0.049,3:0.018"
+
+
+def parse_offsets(text):
+    """'-1:0.2,0:0.6,1:0.2' -> [(-1, 0.2), (0, 0.6), (1, 0.2)], probabilities scaled to sum to 1."""
+    pairs = []
+    for part in str(text).split(','):
+        if part.strip():
+            k, p = part.split(':')
+            pairs.append((int(k), float(p)))
+    total = sum(p for _, p in pairs)
+    if not pairs or total <= 0:
+        raise ValueError(f"bad offset list {text!r}")
+    return [(k, p / total) for k, p in pairs]
+
+
+def calculate_mp_field_score(dd_solved, n_tricks_taken, field_tricks, noise, probabilities_list=None):
+    """Matchpoints of each card against the field, 0 .. 100 (the scale of calculate_mp_score_probability).
+
+    dd_solved      card -> tricks the side to play takes from here, one per layout (aligned by layout)
+    n_tricks_taken tricks that side has taken so far
+    field_tricks   per layout, the tricks the same side takes at the field's tables in the same contract,
+                   before noise (the double-dummy result of the whole deal)
+    noise          [(offset, probability)]: the field's real result is field_tricks + offset
+    A card scores, on each layout, its chance of beating the field (a tie counts half), averaged over the
+    layouts with their weights. Unlike the round robin it compares a card with the other tables, not with
+    the other cards, so a trick counts where the field's results are.
+    """
+    n = len(field_tricks)
+    w = [1.0] * n if probabilities_list is None else [float(p) for p in probabilities_list[:n]]
+    total = sum(w)
+    if total <= 0:
+        return {card: 50.0 for card in dd_solved}
+    # value of reaching t tricks on layout i against that layout's field
+    def value(t, f):
+        v = 0.0
+        for k, p in noise:
+            o = f + k
+            if t > o:
+                v += p
+            elif t == o:
+                v += 0.5 * p
+        return v
+    out = {}
+    for card, tricks in dd_solved.items():
+        acc = 0.0
+        for i in range(n):
+            acc += w[i] * value(n_tricks_taken + tricks[i], field_tricks[i])
+        out[card] = round(100 * acc / total, 2)
+    return out
+
 def calculate_imp_score_probability( data, probabilities_list):
     scores = {key: 0.0 for key in data}  # Initialize scores for each key
     keys = list(data.keys())  # Get the list of keys

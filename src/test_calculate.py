@@ -232,6 +232,18 @@ def test_new_method_ranks_rare_upside_card_correctly():
     assert s["DA"] < s["S6"]
 
 
+def test_mp_percent_matches_dd_path_scale():
+    # PIMC's MP score (mp_percent of calculate_mp_score) is averaged with BEN's
+    # DD score (calculate_mp_score_probability, 0..100), so on equal weights the
+    # two must give the same numbers.
+    tricks = {"A": [9, 10, 10, 8], "B": [9, 9, 10, 9], "C": [8, 9, 9, 8]}
+    dd = calculate.calculate_mp_score_probability(tricks, [0.25] * 4)
+    pimc = calculate.mp_percent(calculate.calculate_mp_score(tricks))
+    for k in tricks:
+        assert abs(dd[k] - pimc[k]) <= 0.5, (k, dd[k], pimc[k])
+    assert calculate.mp_percent({"X": 1.0, "Y": 0.0, "Z": -1.0}) == {"X": 100.0, "Y": 50.0, "Z": 0.0}
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

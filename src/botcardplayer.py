@@ -21,6 +21,8 @@ from colorama import Fore, init
 from nn.timing import ModelTimer
 init()
 class CardPlayer:
+    # decisions scored against the field / left to the round robin (layouts that did not rebuild), per process
+    mp_field_stats = {'used': 0, 'fallback': 0}
 
     def __init__(self, models, player_i, hand_str, public_hand_str, contract, is_decl_vuln, sampler, pimc = None, ddsolver = None, verbose = False):
         self.models = models
@@ -558,6 +560,7 @@ class CardPlayer:
             if use_probability:
                 if self.models.matchpoint:
                     card_ev = calculate.calculate_mp_score_probability(dd_solved,probabilities_list)
+                    card_ev = self._mp_field_score(card_ev, dd_solved, hands_pbn, tricks52, current_trick52, leader_i, probabilities_list)
                 else:
                     card_ev = calculate.calculate_imp_score_probability(real_scores,probabilities_list)
             else:
@@ -600,6 +603,74 @@ class CardPlayer:
         return card_result, (claim_cards, max_value)
     
     
+    def _mp_field_score(self, card_ev, dd_solved, hands_pbn, tricks52, current_trick52, leader_i, probabilities_list):
+        """[cardplay] mp_field = same_contract: score the cards against the field instead of against each other.
+
+        The field is taken to play our contract. On each layout its result is the double-dummy result of the
+        whole deal (the layout's remaining cards plus the cards played so far, solved from the opening lead)
+        plus mp_field_noise. card_ev (BEN's own round robin, 0..100) is mixed in by 1 - mp_field_weight.
+        Any layout that does not rebuild into 52 cards leaves card_ev as it is for this decision.
+        """
+        if getattr(self.models, 'mp_field', 'off') == 'off':
+            return card_ev
+        field = self._mp_field_tricks(hands_pbn, tricks52, current_trick52, leader_i)
+        if field is None:
+            CardPlayer.mp_field_stats['fallback'] += 1
+            return card_ev
+        CardPlayer.mp_field_stats['used'] += 1
+        noise = self.models.mp_field_noise
+        if self.player_i % 2 == 0:
+            noise = [(-k, p) for k, p in noise]    # the noise is in declarer's tricks
+        own = calculate.calculate_mp_field_score(dd_solved, self.n_tricks_taken, field, noise, probabilities_list)
+        wf = self.models.mp_field_weight
+        if self.verbose:
+            print(f"MP against the field (weight {wf}): " + ', '.join(f'{deck52.decode_card(c)} {v:.1f}' for c, v in own.items()))
+        return {c: round(wf * own[c] + (1 - wf) * card_ev[c], 2) for c in card_ev}
+
+    def _mp_field_tricks(self, hands_pbn, tricks52, current_trick52, leader_i):
+        """Per layout, the field's tricks for the side to play: the double-dummy result of the whole deal."""
+        # who played which card so far (BEN seats: 0 lefty, 1 dummy, 2 righty, 3 declarer; lefty leads)
+        played = [[] for _ in range(4)]
+        trump = self.strain_i - 1 if self.strain_i > 0 else None
+        lead = 0
+        for trick in tricks52:
+            for k, card in enumerate(trick):
+                played[(lead + k) % 4].append(card)
+            suit = trick[0] // 13
+            def rank(c):
+                return (2 if trump is not None and c // 13 == trump else 1 if c // 13 == suit else 0, -(c % 13))
+            lead = (lead + max(range(len(trick)), key=lambda k: rank(trick[k]))) % 4
+        if lead != leader_i:
+            return None
+        for k, card in enumerate(current_trick52):
+            played[(leader_i + k) % 4].append(card)
+        cache = self.__dict__.setdefault('_mp_field_cache', {})
+        deals, todo = [], []
+        for pbn in hands_pbn:
+            seats = pbn[2:].split(' ')
+            cards = [set() for _ in range(4)]
+            for j in range(4):
+                for s, holding in enumerate(seats[j].split('.')):
+                    for ch in holding:
+                        cards[j].add(s * 13 + 'AKQJT98765432'.index(ch))
+                cards[j].update(played[j])
+            if sum(len(c) for c in cards) != 52 or len(set().union(*cards)) != 52:
+                return None
+            deal = 'N:' + ' '.join('.'.join(''.join('AKQJT98765432'[c % 13] for c in sorted(x for x in cards[j] if x // 13 == s))
+                                            for s in range(4)) for j in range(4))
+            deals.append(deal)
+            if deal not in cache:
+                todo.append(deal)
+        todo = list(dict.fromkeys(todo))
+        if todo:
+            res = self.dds.solve(self.strain_i, 0, [], todo, 1, purpose="mpfield")
+            if res is None:
+                return None
+            for deal, lefty_tricks in zip(todo, res["max"]):
+                cache[deal] = 13 - lefty_tricks      # declarer's double-dummy tricks
+        decl = [cache[d] for d in deals]
+        return decl if self.player_i % 2 == 1 else [13 - t for t in decl]
+
     def next_card_softmax(self, trick_i):
         if self.verbose:
             print(f"next_card_softmax. Model: {self.playermodel.name} trick: {trick_i+1}")

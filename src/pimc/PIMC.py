@@ -658,7 +658,8 @@ class BGADLL:
 
 
             if self.models.matchpoint:
-                card_ev = calculate.calculate_mp_score(real_scores)
+                # 0..100 like BEN's DD score it is merged with (see calculate.mp_percent)
+                card_ev = calculate.mp_percent(calculate.calculate_mp_score(real_scores))
             else:
                 if self.verbose:
                     print("Real scores")

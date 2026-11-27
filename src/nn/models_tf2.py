@@ -5,6 +5,8 @@ import time
 
 from configparser import ConfigParser
 
+import calculate
+
 # TensorFlow implementations
 from nn.player_tf2 import BatchPlayer as BatchPlayerTF
 from nn.bid_info_tf2 import BidInfo as BidInfoTF
@@ -655,6 +657,12 @@ class Models:
         # made for the old 0..100 scale, so at MP the adjustments outweighed every simulated difference. At IMPs
         # they are added at weight 1 (lead score -24..+24).
         models.lead_suit_adjust_mp = conf.getfloat('adjustments', 'lead_suit_adjust_mp', fallback=0.1)
+        # Matchpoint card play against the field (botcardplayer._mp_field_score); off = BEN's own MP score.
+        models.mp_field = conf.get('cardplay', 'mp_field', fallback='off').strip()
+        if models.mp_field not in ('off', 'same_contract'):
+            raise ValueError(f"mp_field must be off or same_contract, not {models.mp_field}")
+        models.mp_field_noise = calculate.parse_offsets(conf.get('cardplay', 'mp_field_noise', fallback=calculate.MP_FIELD_NOISE))
+        models.mp_field_weight = conf.getfloat('cardplay', 'mp_field_weight', fallback=1.0)
         models.opponent_binfo_model = opponent_binfo_model
         models.partner_model = partner_model
         return models
